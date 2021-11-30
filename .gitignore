@@ -50,3 +50,6 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+mainEx.c
+vector_add_kernel.cl
+vectorAdd
