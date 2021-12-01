@@ -5,7 +5,9 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 // "C:\\Users\\alext\\openCL\\CL",
-                "C:\\OpenCL\\**"
+                "C:\\OpenCL\\**",
+                "C:/mingw64/include/c++/11.2.0",
+                "C:/mingw64/include/c++/11.2.0/x86_64-w64-mingw32"
             ],
             "defines": [
                 "_DEBUG",
