@@ -168,7 +168,7 @@ int main(int argc, char *argv[]) {
   char *kernelSource;
   size_t kernelSize;
 
-  kernelFile = fopen("vecAddKernel.cl", "rb");
+  kernelFile = fopen("vectorAddition.cl", "rb");
   if (!kernelFile) {
     fprintf(stderr, "kernel file not found.\n");
     exit(-1);
@@ -246,7 +246,7 @@ int main(int argc, char *argv[]) {
   }
 
   // create kernel
-  cl_kernel kernel = clCreateKernel(program, "addVectors", &ret);
+  cl_kernel kernel = clCreateKernel(program, "vectorAdd", &ret);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
