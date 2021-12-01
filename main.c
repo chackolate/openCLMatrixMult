@@ -1,18 +1,12 @@
 #define CL_TARGET_OPENCL_VERSION 200
 
 #include <CL/opencl.h>
-#include <math.h>
+// #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define N 1024
-
-// void checkError(cl_int err, const char *operation) {
-//   if (err != CL_SUCCESS) {
-//     fprintf(stderr, "Error during operation: '%s': %d\n", operation, err);
-//     exit(1);
-//   }
-// }
+#define N 512 // length of vector
+#define MAX_SOURCE_SIZE (0x100000)
 
 const char *getErrorString(cl_int error) {
   switch (error) {
@@ -157,211 +151,159 @@ const char *getErrorString(cl_int error) {
 }
 
 int main(int argc, char *argv[]) {
-  // host inputs
-  float *hA;
-  float *hB;
-  // host output
-  float *hC;
-  printf("host floats\n");
+  // host arrays
+  float *hA = (float *)malloc(sizeof(float) * N);
+  float *hB = (float *)malloc(sizeof(float) * N);
+  float *hC = (float *)malloc(sizeof(float) * N);
 
-  // device inputs
-  cl_mem dA;
-  cl_mem dB;
-  // device output
-  cl_mem dC;
-  printf("device memory\n");
+  // initialize values
+  int i = 0;
+  for (i = 0; i < N; ++i) {
+    hA[i] = i + 1;
+    hB[i] = (i + 1) + 2;
+  }
 
-  cl_platform_id platformID;
-  cl_device_id deviceID;
-  cl_context context;
-  cl_command_queue queue;
-  cl_program program;
-  cl_kernel kernel;
+  // load kernel from file
+  FILE *kernelFile;
+  char *kernelSource;
+  size_t kernelSize;
 
-  size_t bytes = N * sizeof(float);
+  kernelFile = fopen("vecAddKernel.cl", "rb");
+  if (!kernelFile) {
+    fprintf(stderr, "kernel file not found.\n");
+    exit(-1);
+  }
+  kernelSource = (char *)malloc(MAX_SOURCE_SIZE);
+  kernelSize = fread(kernelSource, 1, MAX_SOURCE_SIZE, kernelFile);
+  fclose(kernelFile);
 
-  // allocate host memory
-  hA = (float *)malloc(bytes);
-  hB = (float *)malloc(bytes);
-  hC = (float *)malloc(bytes);
-  printf("malloc host memory\n");
+  // get platform & device
+  cl_platform_id platformID = NULL;
+  cl_device_id deviceID = NULL;
+  cl_uint retNumDevices;
+  cl_uint retNumPlatforms;
+  cl_int ret = clGetPlatformIDs(1, &platformID, &retNumPlatforms);
+  ret = clGetDeviceIDs(platformID, CL_DEVICE_TYPE_GPU, 1, &deviceID,
+                       &retNumDevices);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
 
-  // fill in host inputs
-  int i;
+  // create context
+  cl_context context = clCreateContext(NULL, 1, &deviceID, NULL, NULL, &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // create command queue
+  cl_command_queue commandQueue =
+      clCreateCommandQueueWithProperties(context, deviceID, 0, &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // memory buffers
+  cl_mem dA =
+      clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+  cl_mem dB =
+      clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+  cl_mem dC =
+      clCreateBuffer(context, CL_MEM_WRITE_ONLY, N * sizeof(float), NULL, &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // copy host vectors to device
+  ret = clEnqueueWriteBuffer(commandQueue, dA, CL_TRUE, 0, N * sizeof(float),
+                             hA, 0, NULL, NULL);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+  ret = clEnqueueWriteBuffer(commandQueue, dB, CL_TRUE, 0, N * sizeof(float),
+                             hB, 0, NULL, NULL);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // create program from kernel source
+  cl_program program =
+      clCreateProgramWithSource(context, 1, (const char **)&kernelSource,
+                                (const size_t *)&kernelSize, &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // build program
+  ret = clBuildProgram(program, 1, &deviceID, NULL, NULL, NULL);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // create kernel
+  cl_kernel kernel = clCreateKernel(program, "addVectors", &ret);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // set kernel arguments
+  ret = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&dA);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+  ret = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *)&dB);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+  ret = clSetKernelArg(kernel, 2, sizeof(cl_mem), (void *)&dC);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // execute kernel
+  size_t globalItemSize = N;     // 1024
+  size_t localItemSize = N / 16; // 64
+  ret = clEnqueueNDRangeKernel(commandQueue, kernel, 1, NULL, &globalItemSize,
+                               &localItemSize, 0, NULL, NULL);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // read device vectors to host
+  ret = clEnqueueReadBuffer(commandQueue, dC, CL_TRUE, 0, N * sizeof(float), hC,
+                            0, NULL, NULL);
+  if (ret != CL_SUCCESS) {
+    getErrorString(ret);
+  }
+
+  // verify answer
   for (i = 0; i < N; i++) {
-    hA[i] = sinf(i) * sinf(i);
-    hB[i] = cosf(i) * cosf(i);
+    if (hC[i] != (hA[i] + hB[i])) {
+      printf("A%f + B%f = C%f", hA[i], hB[i], hC[i]);
+      break;
+    }
   }
-  printf("fill in host inputs\n");
-
-  size_t globalSize, localSize;
-  cl_int err;
-
-  // work items per work group
-  localSize = 16;
-  // total work items
-  globalSize = ceil(N / (float)localSize) * localSize;
-
-  // Platform ID
-  err = clGetPlatformIDs(1, &platformID, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("got platform id\n");
-  // Device ID
-  err = clGetDeviceIDs(platformID, CL_DEVICE_TYPE_GPU, 1, &deviceID, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("got device id\n");
-  // context
-  context = clCreateContext(0, 1, &deviceID, NULL, NULL, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("created context\n");
-
-  // queue in context
-  clCreateCommandQueueWithProperties(context, deviceID, 0, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("created queue\n");
-
-  // read file
-  FILE *filePointer;
-  char *sourceStr;
-  size_t sourceSize, programSize;
-
-  filePointer = fopen("vectorAddition.cl", "rb");
-  if (!filePointer) {
-    printf("failed to load kernel from source");
-    return 1;
-  }
-  fseek(filePointer, 0, SEEK_END);
-  programSize = ftell(filePointer);
-  rewind(filePointer);
-  sourceStr = (char *)malloc(programSize + 1);
-  sourceStr[programSize] = '\0';
-  fread(sourceStr, sizeof(char), programSize, filePointer);
-  fclose(filePointer);
-  // program in context
-  program = clCreateProgramWithSource(context, 1, (const char **)&sourceStr,
-                                      &programSize, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("created program from source\n");
-
-  // Build executable
-  err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-    // Determine the size of the log
-    size_t log_size;
-    clGetProgramBuildInfo(program, deviceID, CL_PROGRAM_BUILD_LOG, 0, NULL,
-                          &log_size);
-
-    // Allocate memory for the log
-    char *memLog = (char *)malloc(log_size);
-
-    // Get the log
-    clGetProgramBuildInfo(program, deviceID, CL_PROGRAM_BUILD_LOG, log_size,
-                          memLog, NULL);
-
-    // Print the log
-    printf("%s\n", memLog);
-  }
-  printf("built program\n");
-
-  // kernel in program
-  kernel = clCreateKernel(program, "vectorAdd", &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("created kernel in program\n");
-
-  // allocate device memory
-  dA = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  dB = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  dC = clCreateBuffer(context, CL_MEM_WRITE_ONLY, bytes, NULL, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("created device buffers%d\n", err);
-
-  // write data from host to device
-  err = clEnqueueWriteBuffer(queue, dA, CL_TRUE, 0, bytes, hA, 0, NULL, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  err = clEnqueueWriteBuffer(queue, dB, CL_TRUE, 0, bytes, hB, 0, NULL, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("wrote from host to device\n");
-
-  // set arguments
-  err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &dA);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &dB);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  err = clSetKernelArg(kernel, 2, sizeof(cl_mem), &dC);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("set kernel arguments\n");
-
-  // exec kernel over range
-  // cl_event event;
-  err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalSize, &localSize,
-                               0, NULL, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
-  }
-  printf("kernel queued\n");
-
-  // wait for finish
-  clFinish(queue);
-  printf("finished\n");
-
-  // read device to host
-  err = clEnqueueReadBuffer(queue, dC, CL_TRUE, 0, bytes, hC, 0, NULL, NULL);
-  if (err != CL_SUCCESS) {
-    printf("%s\n", getErrorString(err));
+  if (i == N) {
+    printf("appears to be working fine");
   }
 
-  // Sum entire vector and divide result by n (should be 1)
-  float sum = 0;
-  for (i = 0; i < N; i++) {
-    sum += hC[i];
-    // printf("%f + %f = %f\n", hA[i], hB[i], hC[i]);
-  }
-  printf("Final result: %f\n", sum / N);
-
-  // clean up
-  clReleaseMemObject(dA);
-  clReleaseMemObject(dB);
-  clReleaseMemObject(dC);
-  // clReleaseEvent(event);
-  clReleaseProgram(program);
-  clReleaseKernel(kernel);
-  clReleaseCommandQueue(queue);
-  clReleaseContext(context);
-
+  ret = clFlush(commandQueue);
+  ret = clFinish(commandQueue);
+  ret = clReleaseCommandQueue(commandQueue);
+  ret = clReleaseKernel(kernel);
+  ret = clReleaseProgram(program);
+  ret = clReleaseMemObject(dA);
+  ret = clReleaseMemObject(dB);
+  ret = clReleaseMemObject(dC);
+  ret = clReleaseContext(context);
   free(hA);
   free(hB);
   free(hC);
-  // free(err);
+
   return 0;
 }
