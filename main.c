@@ -1,112 +1,152 @@
-#include "CL/cl.h"
+#define CL_TARGET_OPENCL_VERSION 200
+
+#include <math.h>
+#include <opencl.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define CL_TARGET_OPENCL_VERSION 200
-#define MAX_SOURCE_SIZE (0x1000000)
-#define N 1024 // vector length
+#define N 1024
 
-int main(void) {
-  // create inputs
-  int i;
-  float *h_A = (float *)malloc(sizeof(float) * N);
-  float *h_B = (float *)malloc(sizeof(float) * N);
-  float *h_C = (float *)malloc(sizeof(float) * N);
-  for (i = 0; i < N; i++) {
-    h_A[i] = i;
-    h_B[i] = N - i;
-  }
+const char *kernelSource =
+    "\n"
+    "#pragma OPENCL EXTENSION cl_khr_fp64 : enable                    \n"
+    "__kernel void vecAdd(  __global double *a,                       \n"
+    "                       __global double *b,                       \n"
+    "                       __global double *c)                       \n"
+    "{                                                               \n"
+    "    //Get our global thread ID                                  \n"
+    "    int id = get_global_id(0);                                  \n"
+    "                                                                \n"
+    "    //Make sure we do not go out of bounds                      \n"
+    "    if (id < N)                                                 \n"
+    "        c[id] = a[id] + b[id];                                  \n"
+    "}                                                               \n"
+    "\n";
 
-  // load kernel .cl into array source_str
-  FILE *fp;
-  char *source_str;
-  size_t source_size;
-  fp = fopen("vectorAddition.cl", "r");
-  if (!fp) {
-    fprintf(stderr, "Failed to load kernel.\n");
+void checkError(cl_int err, const char *operation) {
+  if (err != CL_SUCCESS) {
+    fprintf(stderr, "Error during operation: '%s': %d\n", operation, err);
     exit(1);
   }
-  source_str = (char *)malloc(MAX_SOURCE_SIZE);
-  source_size = fread(source_str, 1, MAX_SOURCE_SIZE, fp);
-  fclose(fp);
+}
 
-  // platform & device info
-  cl_platform_id platform_id = NULL;
-  cl_device_id device_id = NULL;
-  cl_uint ret_num_devices;
-  cl_uint ret_num_platforms;
-  cl_int ret = clGetPlatformIDs(0, &platform_id, &ret_num_platforms);
-  ret = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 0, &device_id,
-                       &ret_num_devices);
-  printf("%d\n", ret);
+int main(int argc, char *argv[]) {
+  // host inputs
+  float *hA;
+  float *hB;
+  // host output
+  float *hC;
 
-  // OpenCL context
-  cl_context context =
-      clCreateContextFromType(NULL, 1, &device_id, NULL, NULL, &ret);
+  // device inputs
+  cl_mem dA;
+  cl_mem dB;
+  // device output
+  cl_mem dC;
 
-  // command queue
-  cl_command_queue command_queue =
-      clCreateCommandQueueWithProperties(context, device_id, 0, &ret);
-  // clCreateCommandQueueWithProperties(context, device_id, 0, &ret);
+  cl_platform_id platformID;
+  cl_device_id deviceID;
+  cl_context context;
+  cl_command_queue queue;
+  cl_program program;
+  cl_kernel kernel;
 
-  // memory buffers on device
-  cl_mem d_A =
-      clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
-  cl_mem d_B =
-      clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
-  cl_mem d_C =
-      clCreateBuffer(context, CL_MEM_WRITE_ONLY, N * sizeof(float), NULL, &ret);
+  size_t bytes = N * sizeof(float);
 
-  // copy host lists to device buffers
-  ret = clEnqueueWriteBuffer(command_queue, d_A, CL_TRUE, 0, N * sizeof(float),
-                             h_A, 0, NULL, NULL);
-  ret = clEnqueueWriteBuffer(command_queue, d_B, CL_TRUE, 0, N * sizeof(float),
-                             h_B, 0, NULL, NULL);
+  // allocate host memory
+  hA = (float *)malloc(bytes);
+  hB = (float *)malloc(bytes);
+  hC = (float *)malloc(bytes);
 
-  // create program from kernel
-  cl_program program =
-      clCreateProgramWithSource(context, 1, (const char **)&source_str,
-                                (const size_t *)&source_size, &ret);
-
-  // Build program
-  ret = clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
-
-  // create kernel
-  cl_kernel kernel = clCreateKernel(program, "vectorAdd", &ret);
-
-  // kernel arguments
-  ret = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&d_A);
-  ret = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *)&d_B);
-  ret = clSetKernelArg(kernel, 2, sizeof(cl_mem), (void *)&d_C);
-
-  // execute kernel on list
-  size_t global_item_size = N; // 1024
-  size_t local_item_size = 64; // process in groups of 64
-  ret =
-      clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_item_size,
-                             &local_item_size, 0, NULL, NULL);
-
-  // Read device C to host C
-  ret = clEnqueueReadBuffer(command_queue, d_C, CL_TRUE, 0, N * sizeof(float),
-                            h_C, 0, NULL, NULL);
-
-  // display results
-  for (int i = 0; i < N; i++) {
-    // printf("%f + %f = %f\n", h_A[i], h_B[i], h_C[i]);
+  // fill in host inputs
+  int i;
+  for (i = 0; i < N; i++) {
+    hA[i] = sinf(i) * sinf(i);
+    hB[i] = cosf(i) * cosf(i);
   }
 
+  size_t globalSize, localSize;
+  cl_int err;
+
+  // work items per work group
+  localSize = 64;
+
+  // total work items
+  globalSize = ceil(N / (float)localSize) * localSize;
+
+  // Platform ID
+  err = clGetPlatformIDs(1, &platformID, NULL);
+  checkError(err, "platform ID");
+
+  // Device ID
+  err = clGetDeviceIDs(platformID, CL_DEVICE_TYPE_GPU, 1, &deviceID, NULL);
+  checkError(err, "device ID");
+
+  // context
+  context = clCreateContext(0, 1, &deviceID, NULL, NULL, &err);
+  checkError(err, "creating context");
+
+  // queue in context
+  queue = clCreateCommandQueueWithProperties(context, deviceID, 0, &err);
+  checkError(err, "creating queue");
+
+  // allocate device memory
+  dA = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &err);
+  checkError(err, "creating buffer A");
+  dB = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &err);
+  checkError(err, "creating buffer B");
+  dC = clCreateBuffer(context, CL_MEM_WRITE_ONLY, bytes, NULL, &err);
+  checkError(err, "creating buffer C");
+
+  // program in context
+  program = clCreateProgramWithSource(context, 1, (const char **)&kernelSource,
+                                      NULL, &err);
+  checkError(err, "creating program");
+
+  // Build executable
+  err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+  checkError(err, "building program");
+
+  // kernel in program
+  kernel = clCreateKernel(program, "vecAdd", &err);
+  checkError(err, "creating kernel");
+
+  // write data from host to device
+  err = clEnqueueWriteBuffer(queue, dA, CL_TRUE, 0, bytes, hA, 0, NULL, NULL);
+  err |= clEnqueueWriteBuffer(queue, dB, CL_TRUE, 0, bytes, hB, 0, NULL, NULL);
+
+  // set arguments
+  err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &dA);
+  err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &dB);
+  err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &dC);
+
+  // exec kernel over range
+  err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalSize, &localSize,
+                               0, NULL, NULL);
+
+  // wait for finish
+  clFinish(queue);
+
+  // read device to host
+  clEnqueueReadBuffer(queue, dC, CL_TRUE, 0, bytes, hC, 0, NULL, NULL);
+
+  // Sum entire vector and divide result by n (should be 1)
+  float sum = 0;
+  for (i = 0; i < N; i++) {
+    sum += hC[i];
+  }
+  printf("Final result: %f\n", sum / N);
+
   // clean up
-  ret = clFlush(command_queue);
-  ret = clFinish(command_queue);
-  ret = clReleaseKernel(kernel);
-  ret = clReleaseProgram(program);
-  ret = clReleaseMemObject(d_A);
-  ret = clReleaseMemObject(d_B);
-  ret = clReleaseMemObject(d_C);
-  ret = clReleaseCommandQueue(command_queue);
-  ret = clReleaseContext(context);
-  free(h_A);
-  free(h_B);
-  free(h_C);
+  clReleaseMemObject(dA);
+  clReleaseMemObject(dB);
+  clReleaseMemObject(dC);
+  clReleaseProgram(program);
+  clReleaseKernel(kernel);
+  clReleaseCommandQueue(queue);
+  clReleaseContext(context);
+
+  free(hA);
+  free(hB);
+  free(hC);
   return 0;
 }
