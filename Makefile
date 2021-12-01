@@ -1,5 +1,5 @@
 #Makefile
-CC=gcc main.c -I./include/ -L./lib/ -lOpenCL -lm
+CC=gcc main.c -lOpenCL -lm
 all:
 	$(CC) -o vectorAdd
 exl:

@@ -1,18 +1,18 @@
 #define CL_TARGET_OPENCL_VERSION 200
 
+#include <CL/opencl.h>
 #include <math.h>
-#include <opencl.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #define N 1024
 
-void checkError(cl_int err, const char *operation) {
-  if (err != CL_SUCCESS) {
-    fprintf(stderr, "Error during operation: '%s': %d\n", operation, err);
-    exit(1);
-  }
-}
+// void checkError(cl_int err, const char *operation) {
+//   if (err != CL_SUCCESS) {
+//     fprintf(stderr, "Error during operation: '%s': %d\n", operation, err);
+//     exit(1);
+//   }
+// }
 
 const char *getErrorString(cl_int error) {
   switch (error) {
@@ -198,7 +198,7 @@ int main(int argc, char *argv[]) {
   cl_int err;
 
   // work items per work group
-  localSize = 64;
+  localSize = 16;
   // total work items
   globalSize = ceil(N / (float)localSize) * localSize;
 
@@ -257,6 +257,20 @@ int main(int argc, char *argv[]) {
   err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
   if (err != CL_SUCCESS) {
     printf("%s\n", getErrorString(err));
+    // Determine the size of the log
+    size_t log_size;
+    clGetProgramBuildInfo(program, deviceID, CL_PROGRAM_BUILD_LOG, 0, NULL,
+                          &log_size);
+
+    // Allocate memory for the log
+    char *memLog = (char *)malloc(log_size);
+
+    // Get the log
+    clGetProgramBuildInfo(program, deviceID, CL_PROGRAM_BUILD_LOG, log_size,
+                          memLog, NULL);
+
+    // Print the log
+    printf("%s\n", memLog);
   }
   printf("built program\n");
 
@@ -288,22 +302,33 @@ int main(int argc, char *argv[]) {
     printf("%s\n", getErrorString(err));
   }
   err = clEnqueueWriteBuffer(queue, dB, CL_TRUE, 0, bytes, hB, 0, NULL, NULL);
-  checkError(err, "writing to device");
+  if (err != CL_SUCCESS) {
+    printf("%s\n", getErrorString(err));
+  }
   printf("wrote from host to device\n");
 
   // set arguments
   err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &dA);
-  checkError(err, "setting arg0");
-  err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &dB);
-  checkError(err, "setting arg1");
-  err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &dC);
-  checkError(err, "setting arg2");
+  if (err != CL_SUCCESS) {
+    printf("%s\n", getErrorString(err));
+  }
+  err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &dB);
+  if (err != CL_SUCCESS) {
+    printf("%s\n", getErrorString(err));
+  }
+  err = clSetKernelArg(kernel, 2, sizeof(cl_mem), &dC);
+  if (err != CL_SUCCESS) {
+    printf("%s\n", getErrorString(err));
+  }
   printf("set kernel arguments\n");
 
   // exec kernel over range
   // cl_event event;
   err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalSize, &localSize,
                                0, NULL, NULL);
+  if (err != CL_SUCCESS) {
+    printf("%s\n", getErrorString(err));
+  }
   printf("kernel queued\n");
 
   // wait for finish
@@ -311,7 +336,10 @@ int main(int argc, char *argv[]) {
   printf("finished\n");
 
   // read device to host
-  clEnqueueReadBuffer(queue, dC, CL_TRUE, 0, bytes, hC, 0, NULL, NULL);
+  err = clEnqueueReadBuffer(queue, dC, CL_TRUE, 0, bytes, hC, 0, NULL, NULL);
+  if (err != CL_SUCCESS) {
+    printf("%s\n", getErrorString(err));
+  }
 
   // Sum entire vector and divide result by n (should be 1)
   float sum = 0;
