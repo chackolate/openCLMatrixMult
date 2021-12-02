@@ -4,6 +4,7 @@
 // #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define N (1 << 12) // length of vector 4096
 #define MAX_SOURCE_SIZE (0x100000)
@@ -150,44 +151,93 @@ const char *getErrorString(cl_int error) {
   }
 }
 
-int main(int argc, char *argv[]) {
-  // host arrays
-  float *hA = (float *)malloc(sizeof(float) * N);
-  float *hB = (float *)malloc(sizeof(float) * N);
-  float *hC = (float *)malloc(sizeof(float) * N);
+// return a random double between 0 and 1
+double randDouble() {
+  uint64_t r53 = ((uint64_t)(rand()) << 21) ^ (rand() >> 2);
+  return (double)r53 / 9007199254740991.0;
+}
 
-  // initialize values
-  int i = 0;
-  for (i = 0; i < N; ++i) {
-    hA[i] = i + 1;
-    hB[i] = (i + 1) + 2;
+// initialize values
+void initHost(double *hA, double *hB) {
+  for (int i = 0; i < N; i++) {
+    hA[i] = randDouble();
+    hB[i] = randDouble();
   }
+  printf("initialized host inputs\n");
+}
 
-  // load kernel from file
+// load kernel from file
+void kernelFromFile(size_t *kernelSize, char *filename) {
   FILE *kernelFile;
-  char *kernelSource;
-  size_t kernelSize;
-
-  kernelFile = fopen("vectorAddition.cl", "rb");
+  kernelFile = fopen(filename, "rb");
   if (!kernelFile) {
     fprintf(stderr, "kernel file not found.\n");
     exit(-1);
   }
-  kernelSource = (char *)malloc(MAX_SOURCE_SIZE);
-  kernelSize = fread(kernelSource, 1, MAX_SOURCE_SIZE, kernelFile);
+  *kernelSize = fread(kernelSize, 1, MAX_SOURCE_SIZE, kernelFile);
   fclose(kernelFile);
+  printf("loaded kernel from file\n");
+}
+
+// get platform & device
+void getPlatformDevice(cl_platform_id *platformID, cl_device_id *deviceID) {
+  cl_uint retNumDevices;
+  cl_uint retNumPlatforms;
+  cl_int err = clGetPlatformIDs(1, platformID, &retNumPlatforms);
+  if (err != CL_SUCCESS) {
+    printf("%s", getErrorString(err));
+  } else {
+    printf("got platform\n");
+  }
+  err = clGetDeviceIDs(*platformID, CL_DEVICE_TYPE_GPU, 1, deviceID,
+                       &retNumDevices);
+  if (err != CL_SUCCESS) {
+    printf("%s", getErrorString(err));
+  } else {
+    printf("got device\n");
+  }
+}
+
+int main(int argc, char *argv[]) {
+  time_t t;
+  srand((unsigned)time(&t));
+  // host arrays
+  int bytes = N * sizeof(double);
+  double *hA = (double *)malloc(bytes);
+  double *hB = (double *)malloc(bytes);
+  double *hC = (double *)malloc(bytes);
+
+  // initialize values
+  initHost(hA, hB);
+
+  // load kernel from file
+  char *kernelSource = malloc(MAX_SOURCE_SIZE);
+  size_t kernelSize;
+  char filename[] = "vectorAddition.cl";
+  // kernelFromFile(&kernelSize, filename);
+  FILE *kernelFile;
+  kernelFile = fopen(filename, "rb");
+  if (!kernelFile) {
+    fprintf(stderr, "kernel file not found.\n");
+    exit(-1);
+  }
+  kernelSize = fread(&kernelSize, 1, MAX_SOURCE_SIZE, kernelFile);
+  fclose(kernelFile);
+  printf("loaded kernel from file\n");
 
   // get platform & device
   cl_platform_id platformID = NULL;
   cl_device_id deviceID = NULL;
   cl_uint retNumDevices;
   cl_uint retNumPlatforms;
-  cl_int ret = clGetPlatformIDs(1, &platformID, &retNumPlatforms);
+  cl_int ret;
+  ret = clGetPlatformIDs(1, &platformID, &retNumPlatforms);
   ret = clGetDeviceIDs(platformID, CL_DEVICE_TYPE_GPU, 1, &deviceID,
                        &retNumDevices);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
+  // getPlatformDevice(&platformID, &deviceID);
 
   // create context
   cl_context context = clCreateContext(NULL, 1, &deviceID, NULL, NULL, &ret);
@@ -203,30 +253,27 @@ int main(int argc, char *argv[]) {
   }
 
   // memory buffers
-  cl_mem dA =
-      clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
+  cl_mem dA = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &ret);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
-  cl_mem dB =
-      clCreateBuffer(context, CL_MEM_READ_ONLY, N * sizeof(float), NULL, &ret);
+  cl_mem dB = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &ret);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
-  cl_mem dC =
-      clCreateBuffer(context, CL_MEM_WRITE_ONLY, N * sizeof(float), NULL, &ret);
+  cl_mem dC = clCreateBuffer(context, CL_MEM_WRITE_ONLY, bytes, NULL, &ret);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
 
   // copy host vectors to device
-  ret = clEnqueueWriteBuffer(commandQueue, dA, CL_TRUE, 0, N * sizeof(float),
-                             hA, 0, NULL, NULL);
+  ret = clEnqueueWriteBuffer(commandQueue, dA, CL_TRUE, 0, bytes, hA, 0, NULL,
+                             NULL);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
-  ret = clEnqueueWriteBuffer(commandQueue, dB, CL_TRUE, 0, N * sizeof(float),
-                             hB, 0, NULL, NULL);
+  ret = clEnqueueWriteBuffer(commandQueue, dB, CL_TRUE, 0, bytes, hB, 0, NULL,
+                             NULL);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
@@ -266,8 +313,8 @@ int main(int argc, char *argv[]) {
   }
 
   // execute kernel
-  size_t globalItemSize = N;     // 1024
-  size_t localItemSize = N / 16; // 64
+  size_t globalItemSize = N;     // N global items
+  size_t localItemSize = N / 16; // within each global are 64 local items
   ret = clEnqueueNDRangeKernel(commandQueue, kernel, 1, NULL, &globalItemSize,
                                &localItemSize, 0, NULL, NULL);
   if (ret != CL_SUCCESS) {
@@ -275,13 +322,14 @@ int main(int argc, char *argv[]) {
   }
 
   // read device vectors to host
-  ret = clEnqueueReadBuffer(commandQueue, dC, CL_TRUE, 0, N * sizeof(float), hC,
-                            0, NULL, NULL);
+  ret = clEnqueueReadBuffer(commandQueue, dC, CL_TRUE, 0, bytes, hC, 0, NULL,
+                            NULL);
   if (ret != CL_SUCCESS) {
     getErrorString(ret);
   }
 
   // verify answer
+  int i;
   for (i = 0; i < N; i++) {
     if (hC[i] != (hA[i] + hB[i])) {
       printf("A%f + B%f = C%f", hA[i], hB[i], hC[i]);
