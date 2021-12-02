@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define N 512 // length of vector
+#define N (1 << 12) // length of vector
 #define MAX_SOURCE_SIZE (0x100000)
 
 const char *getErrorString(cl_int error) {
@@ -289,7 +289,7 @@ int main(int argc, char *argv[]) {
     }
   }
   if (i == N) {
-    printf("appears to be working fine");
+    printf("all values are correct\n");
   }
 
   ret = clFlush(commandQueue);
