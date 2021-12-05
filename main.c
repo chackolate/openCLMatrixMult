@@ -1,12 +1,11 @@
 #define CL_TARGET_OPENCL_VERSION 200
 
 #include <CL/opencl.h>
-// #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-#define N (1 << 12) // length of vector 4096
+#define N (1 << 27) // length of vector 4096
 #define MAX_SOURCE_SIZE (0x100000)
 
 const char *getErrorString(cl_int error) {
@@ -232,6 +231,57 @@ void cpyHostToDevice(cl_mem dest, double *source,
   checkErr(err, "copied host to device");
 }
 
+// create program from kernel source
+void createProgramFromSource(cl_program *program, cl_context *context,
+                             const char *kernelSource, size_t *kernelSize) {
+  cl_int err;
+  *program =
+      clCreateProgramWithSource(*context, 1, &kernelSource, kernelSize, &err);
+  checkErr(err, "created program from source");
+}
+
+// build program
+void buildProgram(cl_program *program, cl_device_id *deviceID) {
+  cl_int err;
+  err = clBuildProgram(*program, 1, deviceID, NULL, NULL, NULL);
+  checkErr(err, "built program");
+}
+
+// create kernel
+void createKernel(cl_kernel *kernel, cl_program *program, char *funcName) {
+  cl_int err;
+  *kernel = clCreateKernel(*program, funcName, &err);
+  checkErr(err, "created kernel");
+}
+
+// set kernel arguments
+void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
+  cl_int err;
+  err = clSetKernelArg(*kernel, 0, sizeof(cl_mem), (void *)&dA);
+  checkErr(err, "set arg 1");
+  err = clSetKernelArg(*kernel, 1, sizeof(cl_mem), (void *)&dB);
+  checkErr(err, "set arg 2");
+  err = clSetKernelArg(*kernel, 2, sizeof(cl_mem), (void *)&dC);
+  checkErr(err, "set arg 3");
+}
+
+// execute kernel
+void execKernel(size_t globalItemSize, size_t localItemSize,
+                cl_command_queue *commandQueue, cl_kernel *kernel) {
+  cl_int err;
+  err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalItemSize,
+                               &localItemSize, 0, NULL, NULL);
+  checkErr(err, "kernel executed");
+}
+
+// read device vectors back to host
+void readDeviceToHost(cl_mem source, double *dest,
+                      cl_command_queue *commandQueue) {
+  cl_int err;
+  err = clEnqueueReadBuffer(*commandQueue, source, CL_TRUE, 0,
+                            N * sizeof(double), (void *)dest, 0, NULL, NULL);
+}
+
 int main(int argc, char *argv[]) {
   time_t t;
   srand((unsigned)time(&t));
@@ -275,54 +325,26 @@ int main(int argc, char *argv[]) {
   cpyHostToDevice(dB, hB, &commandQueue);
 
   // create program from kernel source
-  cl_program program =
-      clCreateProgramWithSource(context, 1, (const char **)&kernelSource,
-                                (const size_t *)&kernelSize, &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  cl_program program;
+  createProgramFromSource(&program, &context, kernelSource, &kernelSize);
 
   // build program
-  ret = clBuildProgram(program, 1, &deviceID, NULL, NULL, NULL);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  buildProgram(&program, &deviceID);
 
   // create kernel
-  cl_kernel kernel = clCreateKernel(program, "vectorAdd", &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  cl_kernel kernel;
+  createKernel(&kernel, &program, "vectorAdd");
 
   // set kernel arguments
-  ret = clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *)&dA);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
-  ret = clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *)&dB);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
-  ret = clSetKernelArg(kernel, 2, sizeof(cl_mem), (void *)&dC);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  setArgs(&kernel, dA, dB, dC);
 
   // execute kernel
-  size_t globalItemSize = N;     // N global items
-  size_t localItemSize = N / 16; // within each global are 64 local items
-  ret = clEnqueueNDRangeKernel(commandQueue, kernel, 1, NULL, &globalItemSize,
-                               &localItemSize, 0, NULL, NULL);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  size_t globalItemSize = N;  // N global items
+  size_t localItemSize = 256; // within each global are 256 local items (max)
+  execKernel(globalItemSize, localItemSize, &commandQueue, &kernel);
 
   // read device vectors to host
-  ret = clEnqueueReadBuffer(commandQueue, dC, CL_TRUE, 0, bytes, hC, 0, NULL,
-                            NULL);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  readDeviceToHost(dC, hC, &commandQueue);
 
   // verify answer
   int i;
