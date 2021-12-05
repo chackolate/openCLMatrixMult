@@ -8,6 +8,12 @@
 #define N (1 << 27) // length of vector 4096
 #define MAX_SOURCE_SIZE (0x100000)
 
+void vectorAddition(double *A, double *B, double *C) {
+  for (int i = 0; i < N; i++) {
+    C[i] = A[i] + B[i];
+  }
+}
+
 const char *getErrorString(cl_int error) {
   switch (error) {
   // run-time and JIT compiler errors
@@ -206,10 +212,17 @@ void createContext(cl_context *context, cl_device_id *deviceID) {
 
 // create command queue
 void createQueue(cl_command_queue *commandQueue, cl_context *context,
-                 cl_device_id *deviceID) {
+                 cl_device_id *deviceID, int outOfOrder, int profiling) {
   cl_int err;
+  cl_command_queue_properties props[3] = {CL_QUEUE_PROPERTIES, 0, 0};
+  if (outOfOrder) {
+    props[1] |= CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE;
+  }
+  if (profiling) {
+    props[1] |= CL_QUEUE_PROFILING_ENABLE;
+  }
   *commandQueue =
-      clCreateCommandQueueWithProperties(*context, *deviceID, 0, &err);
+      clCreateCommandQueueWithProperties(*context, *deviceID, props, &err);
   checkErr(err, "created command queue");
 }
 
@@ -267,10 +280,11 @@ void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
 
 // execute kernel
 void execKernel(size_t globalItemSize, size_t localItemSize,
-                cl_command_queue *commandQueue, cl_kernel *kernel) {
+                cl_command_queue *commandQueue, cl_kernel *kernel,
+                cl_event *event) {
   cl_int err;
   err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalItemSize,
-                               &localItemSize, 0, NULL, NULL);
+                               &localItemSize, 0, NULL, event);
   checkErr(err, "kernel executed");
 }
 
@@ -283,6 +297,7 @@ void readDeviceToHost(cl_mem source, double *dest,
 }
 
 int main(int argc, char *argv[]) {
+
   time_t t;
   srand((unsigned)time(&t));
   cl_int ret;
@@ -291,6 +306,8 @@ int main(int argc, char *argv[]) {
   double *hA = (double *)malloc(bytes);
   double *hB = (double *)malloc(bytes);
   double *hC = (double *)malloc(bytes);
+  int i;
+  double nanoseconds = 0.0;
 
   // initialize values
   initHost(hA, hB);
@@ -312,7 +329,7 @@ int main(int argc, char *argv[]) {
 
   // create command queue
   cl_command_queue commandQueue;
-  createQueue(&commandQueue, &context, &deviceID);
+  createQueue(&commandQueue, &context, &deviceID, 1, 1);
 
   // memory buffers
   cl_mem dA, dB, dC;
@@ -338,16 +355,46 @@ int main(int argc, char *argv[]) {
   // set kernel arguments
   setArgs(&kernel, dA, dB, dC);
 
+  // benchmark CPU
+  double *testC = (double *)malloc(N * sizeof(double));
+  clock_t start = clock();
+  vectorAddition(hA, hB, testC);
+  clock_t end = clock();
+  double cpuTime = (double)(end - start) / (CLOCKS_PER_SEC);
+  // verify answer
+  for (i = 0; i < N; i++) {
+    if (testC[i] != (hA[i] + hB[i])) {
+      printf("A%f + B%f = C%f\n", hA[i], hB[i], hC[i]);
+      break;
+    }
+  }
+  if (i == N) {
+    printf("CPU values correct. Time taken: %0.3f seconds\n", cpuTime);
+  }
+  free(testC);
+
   // execute kernel
   size_t globalItemSize = N;  // N global items
   size_t localItemSize = 256; // within each global are 256 local items (max)
-  execKernel(globalItemSize, localItemSize, &commandQueue, &kernel);
+  cl_event done;              // profiling flag
+  execKernel(globalItemSize, localItemSize, &commandQueue, &kernel, &done);
+  ret = clWaitForEvents(1, &done);
+  checkErr(ret, "finished execution");
+  readDeviceToHost(dC, hC, &commandQueue);
+  ret = clFinish(commandQueue);
+  checkErr(ret, "finished queue");
+
+  // profiling
+  cl_ulong timeStart;
+  cl_ulong timeEnd;
+  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_START, sizeof(timeStart),
+                          &timeStart, NULL);
+  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_END, sizeof(timeEnd),
+                          &timeEnd, NULL);
+  nanoseconds = timeEnd - timeStart;
 
   // read device vectors to host
-  readDeviceToHost(dC, hC, &commandQueue);
-
   // verify answer
-  int i;
   for (i = 0; i < N; i++) {
     if (hC[i] != (hA[i] + hB[i])) {
       printf("A%f + B%f = C%f\n", hA[i], hB[i], hC[i]);
@@ -355,7 +402,9 @@ int main(int argc, char *argv[]) {
     }
   }
   if (i == N) {
-    printf("All values correct. Random results: \n");
+    printf("GPU values correct. Time taken: %0.3f milliseconds. Random "
+           "results: \n",
+           nanoseconds / 1000000.0);
     for (int j = 0; j < 5; j++) {
       int element = rand() % (N + 1);
       printf("%d: %f + %f = %f\n", element, hA[element], hB[element],
@@ -364,7 +413,6 @@ int main(int argc, char *argv[]) {
   }
 
   ret = clFlush(commandQueue);
-  ret = clFinish(commandQueue);
   ret = clReleaseCommandQueue(commandQueue);
   ret = clReleaseKernel(kernel);
   ret = clReleaseProgram(program);
