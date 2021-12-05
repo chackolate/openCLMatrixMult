@@ -2,7 +2,7 @@
 //Alex Chacko
 //CPEG655
 
-__kernel void matrixMultiply(const int M, const int N, const int K, const __global double* A, const __global double* B, __global *double C){
+__kernel void matrixMultiply(const int M, const int N, const int K, __global const double* A, __global const double* B, __global double *C){
 	//Thread IDs
 	const int threadRow = get_global_id(0); //Row ID of C
 	const int threadCol = get_global_id(1); //Col ID of C

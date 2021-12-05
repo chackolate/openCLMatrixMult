@@ -5,12 +5,47 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define N (1 << 27) // length of vector 4096
+#define N (1 << 27) // length of vector 134,217,728
 #define MAX_SOURCE_SIZE (0x100000)
 
 void vectorAddition(double *A, double *B, double *C) {
   for (int i = 0; i < N; i++) {
     C[i] = A[i] + B[i];
+  }
+}
+
+void cpuBench(double *A, double *B) {
+  double *testC = (double *)malloc(N * sizeof(double));
+
+  clock_t start = clock();
+  vectorAddition(A, B, testC);
+  clock_t end = clock();
+
+  double cpuTime = (double)(end - start) / (CLOCKS_PER_SEC);
+  // verify answer
+  for (int i = 0; i < N; i++) {
+    if (testC[i] != (A[i] + B[i])) {
+      printf("A%f + B%f = C%f\n", A[i], B[i], testC[i]);
+      break;
+    }
+  }
+  printf("CPU values correct. Time taken: %0.3f seconds\n", cpuTime);
+  free(testC);
+}
+
+void gpuBench(double *A, double *B, double *C, double nanoseconds) {
+  for (int i = 0; i < N; i++) {
+    if (C[i] != (A[i] + B[i])) {
+      printf("A%f + B%f = C%f\n", A[i], B[i], C[i]);
+      break;
+    }
+  }
+  printf("GPU values correct. Time taken: %0.3f milliseconds. \nRandom "
+         "results: \n",
+         nanoseconds / 1000000.0);
+  for (int j = 0; j < 5; j++) {
+    int element = rand() % (N + 1);
+    printf("%d: %f + %f = %f\n", element, A[element], B[element], C[element]);
   }
 }
 
@@ -279,13 +314,22 @@ void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
 }
 
 // execute kernel
-void execKernel(size_t globalItemSize, size_t localItemSize,
-                cl_command_queue *commandQueue, cl_kernel *kernel,
-                cl_event *event) {
+void execKernel(cl_device_id deviceID, cl_command_queue *commandQueue,
+                cl_kernel *kernel, cl_event *event) {
+  size_t localWorkSize;
   cl_int err;
-  err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalItemSize,
-                               &localItemSize, 0, NULL, event);
+  err = clGetDeviceInfo(deviceID, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t),
+                        (void *)&localWorkSize, NULL);
+  printf("using device max work group size of %d\n", localWorkSize);
+  checkErr(err, "work size set");
+  size_t globalWorkSize =
+      ceil(N / (float)localWorkSize) *
+      localWorkSize; // 134 million global items to calculate
+  err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalWorkSize,
+                               &localWorkSize, 0, NULL, event);
   checkErr(err, "kernel executed");
+  err = clWaitForEvents(1, event);
+  checkErr(err, "finished execution");
 }
 
 // read device vectors back to host
@@ -298,9 +342,11 @@ void readDeviceToHost(cl_mem source, double *dest,
 
 int main(int argc, char *argv[]) {
 
+  // setup randomization & error return variable
   time_t t;
   srand((unsigned)time(&t));
   cl_int ret;
+
   // host arrays
   int bytes = N * sizeof(double);
   double *hA = (double *)malloc(bytes);
@@ -336,7 +382,6 @@ int main(int argc, char *argv[]) {
   createBuffer(&dA, CL_MEM_READ_ONLY, &context);
   createBuffer(&dB, CL_MEM_READ_ONLY, &context);
   createBuffer(&dC, CL_MEM_WRITE_ONLY, &context);
-
   // copy host vectors to device
   cpyHostToDevice(dA, hA, &commandQueue);
   cpyHostToDevice(dB, hB, &commandQueue);
@@ -355,31 +400,10 @@ int main(int argc, char *argv[]) {
   // set kernel arguments
   setArgs(&kernel, dA, dB, dC);
 
-  // benchmark CPU
-  double *testC = (double *)malloc(N * sizeof(double));
-  clock_t start = clock();
-  vectorAddition(hA, hB, testC);
-  clock_t end = clock();
-  double cpuTime = (double)(end - start) / (CLOCKS_PER_SEC);
-  // verify answer
-  for (i = 0; i < N; i++) {
-    if (testC[i] != (hA[i] + hB[i])) {
-      printf("A%f + B%f = C%f\n", hA[i], hB[i], hC[i]);
-      break;
-    }
-  }
-  if (i == N) {
-    printf("CPU values correct. Time taken: %0.3f seconds\n", cpuTime);
-  }
-  free(testC);
-
   // execute kernel
-  size_t globalItemSize = N;  // N global items
-  size_t localItemSize = 256; // within each global are 256 local items (max)
-  cl_event done;              // profiling flag
-  execKernel(globalItemSize, localItemSize, &commandQueue, &kernel, &done);
-  ret = clWaitForEvents(1, &done);
-  checkErr(ret, "finished execution");
+  cl_event done; // profiling flag
+  execKernel(deviceID, &commandQueue, &kernel, &done);
+  // read device vectors to host
   readDeviceToHost(dC, hC, &commandQueue);
   ret = clFinish(commandQueue);
   checkErr(ret, "finished queue");
@@ -393,24 +417,9 @@ int main(int argc, char *argv[]) {
                           &timeEnd, NULL);
   nanoseconds = timeEnd - timeStart;
 
-  // read device vectors to host
   // verify answer
-  for (i = 0; i < N; i++) {
-    if (hC[i] != (hA[i] + hB[i])) {
-      printf("A%f + B%f = C%f\n", hA[i], hB[i], hC[i]);
-      break;
-    }
-  }
-  if (i == N) {
-    printf("GPU values correct. Time taken: %0.3f milliseconds. Random "
-           "results: \n",
-           nanoseconds / 1000000.0);
-    for (int j = 0; j < 5; j++) {
-      int element = rand() % (N + 1);
-      printf("%d: %f + %f = %f\n", element, hA[element], hB[element],
-             hC[element]);
-    }
-  }
+  cpuBench(hA, hB);
+  gpuBench(hA, hB, hC, nanoseconds);
 
   ret = clFlush(commandQueue);
   ret = clReleaseCommandQueue(commandQueue);
