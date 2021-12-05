@@ -152,29 +152,29 @@ const char *getErrorString(cl_int error) {
 }
 
 // return a random double between 0 and 1
-double randDouble() {
-  uint64_t r53 = ((uint64_t)(rand()) << 21) ^ (rand() >> 2);
-  return (double)r53 / 9007199254740991.0;
+double randDouble(double min, double max) {
+  double range = max - min;
+  double div = RAND_MAX / range;
+  return min + (rand() / div);
 }
 
 // initialize values
 void initHost(double *hA, double *hB) {
   for (int i = 0; i < N; i++) {
-    hA[i] = randDouble();
-    hB[i] = randDouble();
+    hA[i] = randDouble(-1.0, 1.0);
+    hB[i] = randDouble(-1.0, 1.0);
   }
   printf("initialized host inputs\n");
 }
 
 // load kernel from file
-void kernelFromFile(size_t *kernelSize, char *filename) {
-  FILE *kernelFile;
-  kernelFile = fopen(filename, "rb");
+void kernelFromFile(size_t *kernelSize, char *kernelSource, char *filename) {
+  FILE *kernelFile = fopen(filename, "rb");
   if (!kernelFile) {
     fprintf(stderr, "kernel file not found.\n");
     exit(-1);
   }
-  *kernelSize = fread(kernelSize, 1, MAX_SOURCE_SIZE, kernelFile);
+  *kernelSize = fread(kernelSource, 1, MAX_SOURCE_SIZE, kernelFile);
   fclose(kernelFile);
   printf("loaded kernel from file\n");
 }
@@ -198,9 +198,46 @@ void getPlatformDevice(cl_platform_id *platformID, cl_device_id *deviceID) {
   }
 }
 
+// create context
+void createContext(cl_context *context, cl_device_id *deviceID) {
+  cl_int err;
+  *context = clCreateContext(NULL, 1, deviceID, NULL, NULL, &err);
+  if (err != CL_SUCCESS) {
+    printf("%s", getErrorString(err));
+  } else {
+    printf("created context\n");
+  }
+}
+
+// create command queue
+void createQueue(cl_command_queue *commandQueue, cl_context *context,
+                 cl_device_id *deviceID) {
+  cl_int err;
+  *commandQueue =
+      clCreateCommandQueueWithProperties(*context, *deviceID, 0, &err);
+  if (err != CL_SUCCESS) {
+    printf("%s", getErrorString(err));
+  } else {
+    printf("created command queue\n");
+  }
+}
+
+void createBuffer(cl_mem *deviceBuffer, int direction, cl_context *context) {
+  cl_int err;
+  *deviceBuffer = clCreateBuffer(
+      *context, direction, N * sizeof(double), NULL,
+      &err); // for flags: direction will be 1(output) or 2(input).
+  if (err != CL_SUCCESS) {
+    printf("%s", getErrorString(err));
+  } else {
+    printf("created buffer\n");
+  }
+}
+
 int main(int argc, char *argv[]) {
   time_t t;
   srand((unsigned)time(&t));
+  cl_int ret;
   // host arrays
   int bytes = N * sizeof(double);
   double *hA = (double *)malloc(bytes);
@@ -211,60 +248,29 @@ int main(int argc, char *argv[]) {
   initHost(hA, hB);
 
   // load kernel from file
-  char *kernelSource = malloc(MAX_SOURCE_SIZE);
+  char *kernelSource = (char *)malloc(MAX_SOURCE_SIZE);
   size_t kernelSize;
   char filename[] = "vectorAddition.cl";
-  // kernelFromFile(&kernelSize, filename);
-  FILE *kernelFile;
-  kernelFile = fopen(filename, "rb");
-  if (!kernelFile) {
-    fprintf(stderr, "kernel file not found.\n");
-    exit(-1);
-  }
-  kernelSize = fread(&kernelSize, 1, MAX_SOURCE_SIZE, kernelFile);
-  fclose(kernelFile);
-  printf("loaded kernel from file\n");
+  kernelFromFile(&kernelSize, kernelSource, filename);
 
   // get platform & device
   cl_platform_id platformID = NULL;
   cl_device_id deviceID = NULL;
-  cl_uint retNumDevices;
-  cl_uint retNumPlatforms;
-  cl_int ret;
-  ret = clGetPlatformIDs(1, &platformID, &retNumPlatforms);
-  ret = clGetDeviceIDs(platformID, CL_DEVICE_TYPE_GPU, 1, &deviceID,
-                       &retNumDevices);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
-  // getPlatformDevice(&platformID, &deviceID);
+  getPlatformDevice(&platformID, &deviceID);
 
   // create context
-  cl_context context = clCreateContext(NULL, 1, &deviceID, NULL, NULL, &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  cl_context context;
+  createContext(&context, &deviceID);
 
   // create command queue
-  cl_command_queue commandQueue =
-      clCreateCommandQueueWithProperties(context, deviceID, 0, &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  cl_command_queue commandQueue;
+  createQueue(&commandQueue, &context, &deviceID);
 
   // memory buffers
-  cl_mem dA = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
-  cl_mem dB = clCreateBuffer(context, CL_MEM_READ_ONLY, bytes, NULL, &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
-  cl_mem dC = clCreateBuffer(context, CL_MEM_WRITE_ONLY, bytes, NULL, &ret);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  cl_mem dA, dB, dC;
+  createBuffer(&dA, CL_MEM_READ_ONLY, &context);
+  createBuffer(&dB, CL_MEM_READ_ONLY, &context);
+  createBuffer(&dC, CL_MEM_WRITE_ONLY, &context);
 
   // copy host vectors to device
   ret = clEnqueueWriteBuffer(commandQueue, dA, CL_TRUE, 0, bytes, hA, 0, NULL,
@@ -332,12 +338,17 @@ int main(int argc, char *argv[]) {
   int i;
   for (i = 0; i < N; i++) {
     if (hC[i] != (hA[i] + hB[i])) {
-      printf("A%f + B%f = C%f", hA[i], hB[i], hC[i]);
+      printf("A%f + B%f = C%f\n", hA[i], hB[i], hC[i]);
       break;
     }
   }
   if (i == N) {
-    printf("all values are correct\n");
+    printf("All values correct. Random results: \n");
+    for (int j = 0; j < 5; j++) {
+      int element = rand() % (N + 1);
+      printf("%d: %f + %f = %f\n", element, hA[element], hB[element],
+             hC[element]);
+    }
   }
 
   ret = clFlush(commandQueue);
