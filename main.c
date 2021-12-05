@@ -151,6 +151,14 @@ const char *getErrorString(cl_int error) {
   }
 }
 
+void checkErr(cl_int error, char *success) {
+  if (error != CL_SUCCESS) {
+    printf("%s", getErrorString(error));
+  } else {
+    printf("%s\n", success);
+  }
+}
+
 // return a random double between 0 and 1
 double randDouble(double min, double max) {
   double range = max - min;
@@ -184,29 +192,17 @@ void getPlatformDevice(cl_platform_id *platformID, cl_device_id *deviceID) {
   cl_uint retNumDevices;
   cl_uint retNumPlatforms;
   cl_int err = clGetPlatformIDs(1, platformID, &retNumPlatforms);
-  if (err != CL_SUCCESS) {
-    printf("%s", getErrorString(err));
-  } else {
-    printf("got platform\n");
-  }
+  checkErr(err, "got platform");
   err = clGetDeviceIDs(*platformID, CL_DEVICE_TYPE_GPU, 1, deviceID,
                        &retNumDevices);
-  if (err != CL_SUCCESS) {
-    printf("%s", getErrorString(err));
-  } else {
-    printf("got device\n");
-  }
+  checkErr(err, "got device");
 }
 
 // create context
 void createContext(cl_context *context, cl_device_id *deviceID) {
   cl_int err;
   *context = clCreateContext(NULL, 1, deviceID, NULL, NULL, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s", getErrorString(err));
-  } else {
-    printf("created context\n");
-  }
+  checkErr(err, "created context");
 }
 
 // create command queue
@@ -215,23 +211,25 @@ void createQueue(cl_command_queue *commandQueue, cl_context *context,
   cl_int err;
   *commandQueue =
       clCreateCommandQueueWithProperties(*context, *deviceID, 0, &err);
-  if (err != CL_SUCCESS) {
-    printf("%s", getErrorString(err));
-  } else {
-    printf("created command queue\n");
-  }
+  checkErr(err, "created command queue");
 }
 
+// create memory buffers
 void createBuffer(cl_mem *deviceBuffer, int direction, cl_context *context) {
   cl_int err;
   *deviceBuffer = clCreateBuffer(
       *context, direction, N * sizeof(double), NULL,
       &err); // for flags: direction will be 1(output) or 2(input).
-  if (err != CL_SUCCESS) {
-    printf("%s", getErrorString(err));
-  } else {
-    printf("created buffer\n");
-  }
+  checkErr(err, "created buffer");
+}
+
+// copy host vectors to device
+void cpyHostToDevice(cl_mem dest, double *source,
+                     cl_command_queue *commandQueue) {
+  cl_int err;
+  err = clEnqueueWriteBuffer(*commandQueue, dest, CL_TRUE, 0,
+                             N * sizeof(double), source, 0, NULL, NULL);
+  checkErr(err, "copied host to device");
 }
 
 int main(int argc, char *argv[]) {
@@ -273,16 +271,8 @@ int main(int argc, char *argv[]) {
   createBuffer(&dC, CL_MEM_WRITE_ONLY, &context);
 
   // copy host vectors to device
-  ret = clEnqueueWriteBuffer(commandQueue, dA, CL_TRUE, 0, bytes, hA, 0, NULL,
-                             NULL);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
-  ret = clEnqueueWriteBuffer(commandQueue, dB, CL_TRUE, 0, bytes, hB, 0, NULL,
-                             NULL);
-  if (ret != CL_SUCCESS) {
-    getErrorString(ret);
-  }
+  cpyHostToDevice(dA, hA, &commandQueue);
+  cpyHostToDevice(dB, hB, &commandQueue);
 
   // create program from kernel source
   cl_program program =
