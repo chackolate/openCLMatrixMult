@@ -7,7 +7,7 @@
 
 #define N 2048
 
-// return a random double between 0 and 1
+// return a random double between min and max
 double randDouble(double min, double max) {
   double range = max - min;
   double div = RAND_MAX / range;
@@ -15,37 +15,30 @@ double randDouble(double min, double max) {
 }
 
 // initialize values
-void initHost(double *hA[N], double *hB[N]) {
-  printf("function\n");
-  for (int i = 0; i < N; i++) {
-    for (int j = 0; j < N; j++) {
-      hA[i][j] = 0.0;
-      hB[i][j] = 0.0;
-      // hA[i][j] = randDouble(-1.0, 1.0);
-      // hB[i][j] = randDouble(-1.0, 1.0);
-    }
+void initHost(double *hA, double *hB) {
+  for (int i = 0; i < N * N; i++) {
+    hA[i] = randDouble(-2, 2);
+    hB[i] = randDouble(-2, 2);
   }
   printf("initialized host inputs\n");
 }
 
 // multiply matrices on CPU
-void matrixMultiply(double *A[N], double *B[N], double *C[N]) {
+void matrixMultiply(double *A, double *B, double *C) {
   for (int i = 0; i < N; i++) {
     for (int j = 0; j < N; j++) {
-      C[i][j] = 0;
+      float accumulator = 0.0f;
       for (int k = 0; k < N; k++) {
-        C[i][j] += A[i][k] * B[k][j];
+        accumulator += A[k * N + i] * B[j * N + k];
       }
+      C[j * N + i] = accumulator;
     }
   }
 }
 
 // use matrix mult function to benchmark CPU performance
-void cpuBench(double **A, double **B) {
-  double **testC = (double **)malloc(N * sizeof(double));
-  for (int i = 0; i < N; i++) {
-    testC[i] = (double *)malloc(N * sizeof(double));
-  }
+void cpuBench(double *A, double *B) {
+  double *testC = (double *)malloc(N * N * sizeof(double));
 
   printf("multiplying on CPU...\n");
   clock_t start = clock();
@@ -58,11 +51,13 @@ void cpuBench(double **A, double **B) {
   start = clock();
   for (int i = 0; i < N; i++) {
     for (int j = 0; j < N; j++) {
+      float accumulator = 0.0f;
       for (int k = 0; k < N; k++) {
-        if (testC[i][j] != A[i][k] * B[k][j]) {
-          printf("A[%d][%d] %f * B[%d][%d] %f = C[%d][%d] %f", i, k, A[i][k], k,
-                 j, B[k][j], i, j, testC[i][j]);
-        }
+        accumulator += A[k * N + i] * B[j * N + k];
+      }
+      if (testC[j * N + i] != accumulator) {
+        printf("test [%d][%d] failed\n", i, j);
+        break;
       }
     }
   }
@@ -79,16 +74,11 @@ void main(int argc, char *argv[]) {
   srand((unsigned)time(&t));
   cl_int ret;
 
-  printf("mallocing host inputs\n");
-  double **hA = (double **)malloc(N * sizeof(double));
-  double **hB = (double **)malloc(N * sizeof(double));
-  double **hC = (double **)malloc(N * sizeof(double));
-  for (int i = 0; i < N; i++) {
-    hA[i] = (double *)malloc(N * sizeof(double));
-    hB[i] = (double *)malloc(N * sizeof(double));
-    hC[i] = (double *)malloc(N * sizeof(double));
-  }
-  printf("success\n");
+  double *hA = (double *)malloc(N * N * sizeof(double));
+  double *hB = (double *)malloc(N * N * sizeof(double));
+  double *hC = (double *)malloc(N * N * sizeof(double));
+
+  printf("host arrays malloced\n");
 
   initHost(hA, hB);
   cpuBench(hA, hB);
