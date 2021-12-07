@@ -1,54 +1,9 @@
-#define CL_TARGET_OPENCL_VERSION 200
-
+#include "clHelper.h"
 #include <CL/opencl.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <time.h>
 
-#define N (1 << 27) // length of vector 134,217,728
-#define MAX_SOURCE_SIZE (0x100000)
-
-void vectorAddition(double *A, double *B, double *C) {
-  for (int i = 0; i < N; i++) {
-    C[i] = A[i] + B[i];
-  }
-}
-
-void cpuBench(double *A, double *B) {
-  double *testC = (double *)malloc(N * sizeof(double));
-
-  clock_t start = clock();
-  vectorAddition(A, B, testC);
-  clock_t end = clock();
-
-  double cpuTime = (double)(end - start) / (CLOCKS_PER_SEC);
-  // verify answer
-  for (int i = 0; i < N; i++) {
-    if (testC[i] != (A[i] + B[i])) {
-      printf("A%f + B%f = C%f\n", A[i], B[i], testC[i]);
-      break;
-    }
-  }
-  printf("CPU values correct. Time taken: %0.3f seconds\n", cpuTime);
-  free(testC);
-}
-
-void gpuBench(double *A, double *B, double *C, double nanoseconds) {
-  for (int i = 0; i < N; i++) {
-    if (C[i] != (A[i] + B[i])) {
-      printf("A%f + B%f = C%f\n", A[i], B[i], C[i]);
-      break;
-    }
-  }
-  printf("GPU values correct. Time taken: %0.3f milliseconds. \nRandom "
-         "results: \n",
-         nanoseconds / 1000000.0);
-  for (int j = 0; j < 5; j++) {
-    int element = rand() % (N + 1);
-    printf("%d: %f + %f = %f\n", element, A[element], B[element], C[element]);
-  }
-}
-
+// simple function to get output error string from an error int
 const char *getErrorString(cl_int error) {
   switch (error) {
   // run-time and JIT compiler errors
@@ -191,28 +146,28 @@ const char *getErrorString(cl_int error) {
   }
 }
 
+// real function to check error message and print success or fail
 void checkErr(cl_int error, char *success) {
   if (error != CL_SUCCESS) {
-    printf("%s", getErrorString(error));
+    printf("%s\n", getErrorString(error));
   } else {
     printf("%s\n", success);
   }
 }
 
-// return a random double between 0 and 1
+// random double between min and max
 double randDouble(double min, double max) {
   double range = max - min;
   double div = RAND_MAX / range;
   return min + (rand() / div);
 }
 
-// initialize values
+// initialize host inputs
 void initHost(double *hA, double *hB) {
-  for (int i = 0; i < N; i++) {
-    hA[i] = randDouble(-1.0, 1.0);
-    hB[i] = randDouble(-1.0, 1.0);
+  for (int i = 0; i < N * N; i++) {
+    hA[i] = randDouble(-2, 2);
+    hB[i] = randDouble(-2, 2);
   }
-  printf("initialized host inputs\n");
 }
 
 // load kernel from file
@@ -261,7 +216,6 @@ void createQueue(cl_command_queue *commandQueue, cl_context *context,
   checkErr(err, "created command queue");
 }
 
-// create memory buffers
 void createBuffer(cl_mem *deviceBuffer, int direction, cl_context *context) {
   cl_int err;
   *deviceBuffer = clCreateBuffer(
@@ -302,18 +256,20 @@ void createKernel(cl_kernel *kernel, cl_program *program, char *funcName) {
   checkErr(err, "created kernel");
 }
 
-// set kernel arguments
 void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
   cl_int err;
-  err = clSetKernelArg(*kernel, 0, sizeof(cl_mem), (void *)&dA);
+  int n = N;
+  int *nP = &n;
+  err = clSetKernelArg(*kernel, 0, sizeof(n), (void *)&nP);
+  checkErr(err, "set arg 0");
+  err = clSetKernelArg(*kernel, 1, sizeof(cl_mem), (void *)&dA);
   checkErr(err, "set arg 1");
-  err = clSetKernelArg(*kernel, 1, sizeof(cl_mem), (void *)&dB);
+  err = clSetKernelArg(*kernel, 2, sizeof(cl_mem), (void *)&dB);
   checkErr(err, "set arg 2");
-  err = clSetKernelArg(*kernel, 2, sizeof(cl_mem), (void *)&dC);
+  err = clSetKernelArg(*kernel, 3, sizeof(cl_mem), (void *)&dC);
   checkErr(err, "set arg 3");
 }
 
-// execute kernel
 void execKernel(cl_device_id deviceID, cl_command_queue *commandQueue,
                 cl_kernel *kernel, cl_event *event) {
   size_t localWorkSize;
@@ -322,9 +278,8 @@ void execKernel(cl_device_id deviceID, cl_command_queue *commandQueue,
                         (void *)&localWorkSize, NULL);
   printf("using device max work group size of %d\n", localWorkSize);
   checkErr(err, "work size set");
-  size_t globalWorkSize =
-      ceil(N / (float)localWorkSize) *
-      localWorkSize; // 134 million global items to calculate
+  size_t globalWorkSize = ceil((N * N) / (float)localWorkSize) *
+                          localWorkSize; // N*N global items to calculate
   err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalWorkSize,
                                &localWorkSize, 0, NULL, event);
   checkErr(err, "kernel executed");
@@ -338,101 +293,24 @@ void readDeviceToHost(cl_mem source, double *dest,
   cl_int err;
   err = clEnqueueReadBuffer(*commandQueue, source, CL_TRUE, 0,
                             N * sizeof(double), (void *)dest, 0, NULL, NULL);
+  checkErr(err, "read device to host");
 }
 
-int main(int argc, char *argv[]) {
-
-  // setup randomization & error return variable
-  time_t t;
-  srand((unsigned)time(&t));
-  cl_int ret;
-
-  // host arrays
-  int bytes = N * sizeof(double);
-  double *hA = (double *)malloc(bytes);
-  double *hB = (double *)malloc(bytes);
-  double *hC = (double *)malloc(bytes);
-  int i;
-  double nanoseconds = 0.0;
-
-  // initialize values
-  initHost(hA, hB);
-
-  // load kernel from file
-  char *kernelSource = (char *)malloc(MAX_SOURCE_SIZE);
-  size_t kernelSize;
-  char filename[] = "vectorAddition.cl";
-  kernelFromFile(&kernelSize, kernelSource, filename);
-
-  // get platform & device
-  cl_platform_id platformID = NULL;
-  cl_device_id deviceID = NULL;
-  getPlatformDevice(&platformID, &deviceID);
-
-  // create context
-  cl_context context;
-  createContext(&context, &deviceID);
-
-  // create command queue
-  cl_command_queue commandQueue;
-  createQueue(&commandQueue, &context, &deviceID, 1, 1);
-
-  // memory buffers
-  cl_mem dA, dB, dC;
-  createBuffer(&dA, CL_MEM_READ_ONLY, &context);
-  createBuffer(&dB, CL_MEM_READ_ONLY, &context);
-  createBuffer(&dC, CL_MEM_WRITE_ONLY, &context);
-  // copy host vectors to device
-  cpyHostToDevice(dA, hA, &commandQueue);
-  cpyHostToDevice(dB, hB, &commandQueue);
-
-  // create program from kernel source
-  cl_program program;
-  createProgramFromSource(&program, &context, kernelSource, &kernelSize);
-
-  // build program
-  buildProgram(&program, &deviceID);
-
-  // create kernel
-  cl_kernel kernel;
-  createKernel(&kernel, &program, "vectorAdd");
-
-  // set kernel arguments
-  setArgs(&kernel, dA, dB, dC);
-
-  // execute kernel
-  cl_event done; // profiling flag
-  execKernel(deviceID, &commandQueue, &kernel, &done);
-  // read device vectors to host
-  readDeviceToHost(dC, hC, &commandQueue);
-  ret = clFinish(commandQueue);
-  checkErr(ret, "finished queue");
-
-  // profiling
-  cl_ulong timeStart;
-  cl_ulong timeEnd;
-  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_START, sizeof(timeStart),
-                          &timeStart, NULL);
-  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_END, sizeof(timeEnd),
-                          &timeEnd, NULL);
-  nanoseconds = timeEnd - timeStart;
-
-  // verify answer
-  cpuBench(hA, hB);
-  gpuBench(hA, hB, hC, nanoseconds);
-
-  ret = clFlush(commandQueue);
-  ret = clReleaseCommandQueue(commandQueue);
-  ret = clReleaseKernel(kernel);
-  ret = clReleaseProgram(program);
-  ret = clReleaseMemObject(dA);
-  ret = clReleaseMemObject(dB);
-  ret = clReleaseMemObject(dC);
-  ret = clReleaseContext(context);
-  free(hA);
-  free(hB);
-  free(hC);
-  free(kernelSource);
-
-  return 0;
+void gpuBench(double *A, double *B, double *C, double nanoseconds) {
+  printf("verification...\n");
+  for (int i = 0; i < N; i++) {
+    for (int j = 0; j < N; j++) {
+      float accumulator = 0.0;
+      for (int k = 0; k < N; k++) {
+        accumulator += A[k * N + i] * B[j * N + k];
+        if (C[j * N + i] != accumulator) {
+          // printf("%f * %f != %f\n", A[k * N + i], B[j * N + k], accumulator);
+          printf("fail\n");
+          break;
+        }
+      }
+    }
+  }
+  printf("GPU values correct. Time taken: %0.3f milliseconds\n",
+         nanoseconds / 1000000.0);
 }

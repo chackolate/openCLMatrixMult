@@ -1,6 +1,8 @@
 #Makefile
 CC=gcc
-vecAdd:
+all:
+
+vec:
 	$(CC) vectorAdd.c -I./include -L./lib -lOpenCL -o vectorAdd
-matMult:
-	$(CC) matrixMult.c -I./include -L./lib -lOpenCL -o matrixMult
+mat:
+	$(CC) matrixMult.c clHelper.c -I./include -L./lib -lOpenCL -o matrixMult
