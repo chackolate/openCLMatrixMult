@@ -150,6 +150,7 @@ const char *getErrorString(cl_int error) {
 void checkErr(cl_int error, char *success) {
   if (error != CL_SUCCESS) {
     printf("%s\n", getErrorString(error));
+    exit(0);
   } else {
     printf("%s\n", success);
   }
@@ -165,8 +166,8 @@ double randDouble(double min, double max) {
 // initialize host inputs
 void initHost(double *hA, double *hB) {
   for (int i = 0; i < N * N; i++) {
-    hA[i] = randDouble(-2, 2);
-    hB[i] = randDouble(-2, 2);
+    hA[i] = randDouble(-1.0, 1.0);
+    hB[i] = randDouble(-1.0, 1.0);
   }
 }
 
@@ -277,9 +278,7 @@ void execKernel(cl_device_id deviceID, cl_command_queue *commandQueue,
   err = clGetDeviceInfo(deviceID, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t),
                         (void *)&localWorkSize, NULL);
   printf("using device max work group size of %d\n", localWorkSize);
-  checkErr(err, "work size set");
-  size_t globalWorkSize = ceil((N * N) / (float)localWorkSize) *
-                          localWorkSize; // N*N global items to calculate
+  size_t globalWorkSize = N * N; // N*N global items to calculate
   err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalWorkSize,
                                &localWorkSize, 0, NULL, event);
   checkErr(err, "kernel executed");

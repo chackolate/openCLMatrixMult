@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <time.h>
 
-#define N 128
+#define N 256
 #define MAX_SOURCE_SIZE (0x100000)
 
 const char *getErrorString(cl_int error);

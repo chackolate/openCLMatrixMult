@@ -3,6 +3,6 @@ CC=gcc
 all:
 
 vec:
-	$(CC) vectorAdd.c -I./include -L./lib -lOpenCL -o vectorAdd
+	$(CC) vectorMain.c -I./include -L./lib -lOpenCL -o vecOp
 mat:
-	$(CC) matrixMult.c clHelper.c -I./include -L./lib -lOpenCL -o matrixMult
+	$(CC) matrixMain.c clHelper.c -I./include -L./lib -lOpenCL -o matrixOp

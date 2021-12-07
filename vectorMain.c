@@ -361,8 +361,7 @@ int main(int argc, char *argv[]) {
   // load kernel from file
   char *kernelSource = (char *)malloc(MAX_SOURCE_SIZE);
   size_t kernelSize;
-  char filename[] = "vectorAddition.cl";
-  kernelFromFile(&kernelSize, kernelSource, filename);
+  kernelFromFile(&kernelSize, kernelSource, "vector.cl");
 
   // get platform & device
   cl_platform_id platformID = NULL;
@@ -395,7 +394,7 @@ int main(int argc, char *argv[]) {
 
   // create kernel
   cl_kernel kernel;
-  createKernel(&kernel, &program, "vectorAdd");
+  createKernel(&kernel, &program, "mult");
 
   // set kernel arguments
   setArgs(&kernel, dA, dB, dC);
