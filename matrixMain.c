@@ -69,9 +69,8 @@ void main(int argc, char *argv[]) {
   initHost(hA, hB);
 
   // load kernel file
-  char *kernelSource = (char *)malloc(MAX_SOURCE_SIZE);
   size_t kernelSize;
-  kernelFromFile(&kernelSize, kernelSource, "matrix.cl");
+  char *kernelSource = kernelFromFile(&kernelSize, "matrix.cl");
 
   // get platform & device
   cl_platform_id platformID = NULL;
@@ -80,7 +79,7 @@ void main(int argc, char *argv[]) {
 
   // create context
   cl_context context;
-  createContext(&context, &deviceID);
+  createContext(&context, &platformID, &deviceID);
 
   // create command queue
   cl_command_queue commandQueue;
@@ -88,11 +87,14 @@ void main(int argc, char *argv[]) {
 
   // create buffers
   cl_mem dA, dB, dC;
-  createBuffer(&dA, CL_MEM_READ_ONLY, &context);
-  createBuffer(&dB, CL_MEM_READ_ONLY, &context);
-  createBuffer(&dC, CL_MEM_WRITE_ONLY, &context);
-  cpyHostToDevice(dA, hA, &commandQueue);
-  cpyHostToDevice(dB, hB, &commandQueue);
+  cl_double d_A;
+  createBuffer(&dA, bytes, CL_MEM_READ_ONLY, &context);
+  createBuffer(&dB, bytes, CL_MEM_READ_ONLY, &context);
+  createBuffer(&dC, bytes, CL_MEM_READ_WRITE, &context);
+  writeBuffer(dA, hA, &commandQueue);
+  writeBuffer(dB, hB, &commandQueue);
+  //--------------------------------------
+  writeBuffer(dC, hA, &commandQueue);
 
   // create program from kernel source
   cl_program program;
@@ -108,8 +110,31 @@ void main(int argc, char *argv[]) {
   // set arguments
   setArgs(&kernel, dA, dB, dC);
 
+  // exec kernel
+  cl_event done = NULL;
+  // execKernel(commandQueue, kernel, &done);
+
+  readBuffer(dC, hC, &commandQueue);
+  ret = clFinish(commandQueue);
+  checkErr(ret, "finished queue");
+  printf("%f %f %f\n", hA[0], hB[0], hC[0]);
+  int last = (N - 1) * N + (N - 1);
+  printf("%f %f %f\n", hA[last], hB[last], hC[last]);
+
+  // profiling
+  // cl_ulong timeStart;
+  // cl_ulong timeEnd;
+  // clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_START,
+  // sizeof(timeStart),
+  //                         &timeStart, NULL);
+  // clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_END,
+  // sizeof(timeEnd),
+  //                         &timeEnd, NULL);
+  // nanoseconds = timeEnd - timeStart;
+
   ret = clFlush(commandQueue);
 
+  ret = clReleaseEvent(done);
   ret = clReleaseKernel(kernel);
   ret = clReleaseProgram(program);
   ret = clReleaseMemObject(dC);

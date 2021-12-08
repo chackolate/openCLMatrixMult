@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 
+//-----------------host helper stuff-----------------
 // simple function to get output error string from an error int
 const char *getErrorString(cl_int error) {
   switch (error) {
@@ -171,33 +172,27 @@ void initHost(double *hA, double *hB) {
   }
 }
 
-// load kernel from file
-void kernelFromFile(size_t *kernelSize, char *kernelSource, char *filename) {
-  FILE *kernelFile = fopen(filename, "rb");
-  if (!kernelFile) {
-    fprintf(stderr, "kernel file not found.\n");
-    exit(-1);
-  }
-  *kernelSize = fread(kernelSource, 1, MAX_SOURCE_SIZE, kernelFile);
-  fclose(kernelFile);
-  printf("loaded kernel from file\n");
-}
-
+//-----------------configure environment-----------------
 // get platform & device
 void getPlatformDevice(cl_platform_id *platformID, cl_device_id *deviceID) {
   cl_uint retNumDevices;
   cl_uint retNumPlatforms;
   cl_int err = clGetPlatformIDs(1, platformID, &retNumPlatforms);
   checkErr(err, "got platform");
-  err = clGetDeviceIDs(*platformID, CL_DEVICE_TYPE_GPU, 1, deviceID,
-                       &retNumDevices);
+  err =
+      clGetDeviceIDs(*platformID, CL_DEVICE_TYPE_GPU, 0, NULL, &retNumDevices);
+  err = clGetDeviceIDs(*platformID, CL_DEVICE_TYPE_GPU, retNumDevices, deviceID,
+                       NULL);
   checkErr(err, "got device");
 }
 
 // create context
-void createContext(cl_context *context, cl_device_id *deviceID) {
+void createContext(cl_context *context, cl_platform_id *platformID,
+                   cl_device_id *deviceID) {
+  cl_context_properties props[3] = {CL_CONTEXT_PLATFORM,
+                                    (cl_context_properties)*platformID, 0};
   cl_int err;
-  *context = clCreateContext(NULL, 1, deviceID, NULL, NULL, &err);
+  *context = clCreateContext(props, 1, deviceID, NULL, NULL, &err);
   checkErr(err, "created context");
 }
 
@@ -216,25 +211,30 @@ void createQueue(cl_command_queue *commandQueue, cl_context *context,
       clCreateCommandQueueWithProperties(*context, *deviceID, props, &err);
   checkErr(err, "created command queue");
 }
+//------------------------------------------------------------
+// load kernel from file
+char *kernelFromFile(size_t *kernelSize, char *filename) {
+  FILE *kernelFile = fopen(filename, "rb");
+  if (!kernelFile) {
+    fprintf(stderr, "kernel file not found.\n");
+    exit(-1);
+  }
+  // get size
+  fseek(kernelFile, 0, SEEK_END);
+  long size = ftell(kernelFile);
+  rewind(kernelFile);
 
-void createBuffer(cl_mem *deviceBuffer, int direction, cl_context *context) {
-  cl_int err;
-  *deviceBuffer = clCreateBuffer(
-      *context, direction, N * sizeof(double), NULL,
-      &err); // for flags: direction will be 1(output) or 2(input).
-  checkErr(err, "created buffer");
+  // read string
+  char *source = (char *)malloc((size + 1) * sizeof(char));
+  fread(source, 1, size * sizeof(char), kernelFile);
+  fclose(kernelFile);
+  printf("loaded kernel from file\n");
+
+  *kernelSize = size;
+  return source;
 }
 
-// copy host vectors to device
-void cpyHostToDevice(cl_mem dest, double *source,
-                     cl_command_queue *commandQueue) {
-  cl_int err;
-  err = clEnqueueWriteBuffer(*commandQueue, dest, CL_TRUE, 0,
-                             N * sizeof(double), source, 0, NULL, NULL);
-  checkErr(err, "copied host to device");
-}
-
-// create program from kernel source
+// compile program from source
 void createProgramFromSource(cl_program *program, cl_context *context,
                              const char *kernelSource, size_t *kernelSize) {
   cl_int err;
@@ -248,6 +248,37 @@ void buildProgram(cl_program *program, cl_device_id *deviceID) {
   cl_int err;
   err = clBuildProgram(*program, 1, deviceID, NULL, NULL, NULL);
   checkErr(err, "built program");
+  // Check for compilation errors
+  // size_t logSize;
+  // err = clGetProgramBuildInfo(*program, *deviceID, CL_PROGRAM_BUILD_LOG, 0,
+  //                             NULL, &logSize);
+  // checkErr(err, "build passed");
+  // char *messages = (char *)malloc((1 + logSize) * sizeof(char));
+  // err = clGetProgramBuildInfo(*program, *deviceID, CL_PROGRAM_BUILD_LOG,
+  //                             logSize, messages, NULL);
+  // checkErr(err, "build passed");
+  // messages[logSize] = '\0';
+  // if (logSize > 10) {
+  //   printf("## Compiler message: %s\n", messages);
+  // }
+  // free(messages);
+}
+
+void createBuffer(cl_mem *deviceBuffer, size_t size, int direction,
+                  cl_context *context) {
+  cl_int err;
+  *deviceBuffer = clCreateBuffer(
+      *context, direction, size, NULL,
+      &err); // for flags: direction will be 1(output) or 2(input).
+  checkErr(err, "created buffer");
+}
+
+// copy host to device
+void writeBuffer(cl_mem dest, double *source, cl_command_queue *commandQueue) {
+  cl_int err;
+  err = clEnqueueWriteBuffer(*commandQueue, dest, CL_TRUE, 0,
+                             N * N * sizeof(*source), source, 0, NULL, NULL);
+  checkErr(err, "copied host to device");
 }
 
 // create kernel
@@ -260,8 +291,7 @@ void createKernel(cl_kernel *kernel, cl_program *program, char *funcName) {
 void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
   cl_int err;
   int n = N;
-  int *nP = &n;
-  err = clSetKernelArg(*kernel, 0, sizeof(n), (void *)&nP);
+  err = clSetKernelArg(*kernel, 0, sizeof(int), (void *)&n);
   checkErr(err, "set arg 0");
   err = clSetKernelArg(*kernel, 1, sizeof(cl_mem), (void *)&dA);
   checkErr(err, "set arg 1");
@@ -271,27 +301,29 @@ void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
   checkErr(err, "set arg 3");
 }
 
-void execKernel(cl_device_id deviceID, cl_command_queue *commandQueue,
-                cl_kernel *kernel, cl_event *event) {
-  size_t localWorkSize;
+void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
+                cl_event *event) {
+  const int tile = 8; // solve the matrix in groups of 64
+  const size_t local[2] = {tile, tile};
+  const size_t global[2] = {256, 256};
   cl_int err;
-  err = clGetDeviceInfo(deviceID, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t),
-                        (void *)&localWorkSize, NULL);
-  printf("using device max work group size of %d\n", localWorkSize);
-  size_t globalWorkSize = N * N; // N*N global items to calculate
-  err = clEnqueueNDRangeKernel(*commandQueue, *kernel, 1, NULL, &globalWorkSize,
-                               &localWorkSize, 0, NULL, event);
+  // err = clGetDeviceInfo(deviceID, CL_DEVICE_MAX_WORK_GROUP_SIZE,
+  // sizeof(size_t),
+  //                       (void *)&localWorkSize, NULL);
+  // printf("using device max work group size of %d\n", localWorkSize);
+  // size_t globalWorkSize = N * N; // N*N global items to calculate
+  err = clEnqueueNDRangeKernel(commandQueue, kernel, 2, NULL, global, local, 0,
+                               NULL, event);
   checkErr(err, "kernel executed");
   err = clWaitForEvents(1, event);
   checkErr(err, "finished execution");
 }
 
 // read device vectors back to host
-void readDeviceToHost(cl_mem source, double *dest,
-                      cl_command_queue *commandQueue) {
+void readBuffer(cl_mem source, double *dest, cl_command_queue *commandQueue) {
   cl_int err;
   err = clEnqueueReadBuffer(*commandQueue, source, CL_TRUE, 0,
-                            N * sizeof(double), (void *)dest, 0, NULL, NULL);
+                            N * N * sizeof(*dest), (void *)dest, 0, NULL, NULL);
   checkErr(err, "read device to host");
 }
 
