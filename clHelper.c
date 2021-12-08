@@ -167,8 +167,8 @@ double randDouble(double min, double max) {
 // initialize host inputs
 void initHost(double *hA, double *hB) {
   for (int i = 0; i < N * N; i++) {
-    hA[i] = randDouble(-1.0, 1.0);
-    hB[i] = randDouble(-1.0, 1.0);
+    hA[i] = i % 2;
+    hB[i] = 1;
   }
 }
 
@@ -303,9 +303,9 @@ void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC) {
 
 void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
                 cl_event *event) {
-  const int tile = 8; // solve the matrix in groups of 64
+  const int tile = 16; // solve the matrix in groups of 256
   const size_t local[2] = {tile, tile};
-  const size_t global[2] = {256, 256};
+  const size_t global[2] = {N, N};
   cl_int err;
   // err = clGetDeviceInfo(deviceID, CL_DEVICE_MAX_WORK_GROUP_SIZE,
   // sizeof(size_t),
@@ -328,20 +328,24 @@ void readBuffer(cl_mem source, double *dest, cl_command_queue *commandQueue) {
 }
 
 void gpuBench(double *A, double *B, double *C, double nanoseconds) {
+  clock_t start = clock();
   printf("verification...\n");
   for (int i = 0; i < N; i++) {
     for (int j = 0; j < N; j++) {
       float accumulator = 0.0;
       for (int k = 0; k < N; k++) {
         accumulator += A[k * N + i] * B[j * N + k];
-        if (C[j * N + i] != accumulator) {
-          // printf("%f * %f != %f\n", A[k * N + i], B[j * N + k], accumulator);
-          printf("fail\n");
-          break;
-        }
+      }
+      if (C[j * N + i] != accumulator) {
+        // printf("%f * %f != %f\n", A[k * N + i], B[j * N + k], accumulator);
+        printf("fail\n");
+        exit(-1);
       }
     }
   }
+  clock_t end = clock();
+  double cpuTime = (end - start) / (double)CLOCKS_PER_SEC;
   printf("GPU values correct. Time taken: %0.3f milliseconds\n",
          nanoseconds / 1000000.0);
+  printf("CPU verification time: %0.3f seconds\n", cpuTime);
 }

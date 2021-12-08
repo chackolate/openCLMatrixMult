@@ -94,7 +94,7 @@ void main(int argc, char *argv[]) {
   writeBuffer(dA, hA, &commandQueue);
   writeBuffer(dB, hB, &commandQueue);
   //--------------------------------------
-  writeBuffer(dC, hA, &commandQueue);
+  // writeBuffer(dC, hA, &commandQueue);
 
   // create program from kernel source
   cl_program program;
@@ -112,25 +112,22 @@ void main(int argc, char *argv[]) {
 
   // exec kernel
   cl_event done = NULL;
-  // execKernel(commandQueue, kernel, &done);
+  execKernel(commandQueue, kernel, &done);
 
   readBuffer(dC, hC, &commandQueue);
   ret = clFinish(commandQueue);
   checkErr(ret, "finished queue");
-  printf("%f %f %f\n", hA[0], hB[0], hC[0]);
-  int last = (N - 1) * N + (N - 1);
-  printf("%f %f %f\n", hA[last], hB[last], hC[last]);
 
   // profiling
-  // cl_ulong timeStart;
-  // cl_ulong timeEnd;
-  // clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_START,
-  // sizeof(timeStart),
-  //                         &timeStart, NULL);
-  // clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_END,
-  // sizeof(timeEnd),
-  //                         &timeEnd, NULL);
-  // nanoseconds = timeEnd - timeStart;
+  cl_ulong timeStart;
+  cl_ulong timeEnd;
+  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_START, sizeof(timeStart),
+                          &timeStart, NULL);
+  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_END, sizeof(timeEnd),
+                          &timeEnd, NULL);
+  nanoseconds = timeEnd - timeStart;
+
+  gpuBench(hA, hB, hC, nanoseconds);
 
   ret = clFlush(commandQueue);
 
