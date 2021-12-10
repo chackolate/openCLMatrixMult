@@ -47,6 +47,7 @@ void main(int argc, char *argv[]) {
   srand((unsigned)time(&t));
   size_t bytes = N * N * sizeof(double *);
 
+  // host matrices
   double *hA = (double *)malloc(bytes);
   double *hB = (double *)malloc(bytes);
   double *hC = (double *)malloc(bytes);
