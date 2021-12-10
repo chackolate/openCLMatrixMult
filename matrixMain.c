@@ -32,13 +32,10 @@ void cpuBench(float *A, float *B, float *C) {
   printf("finished multiplying. Time taken: %3f seconds\n", cpuTime);
 
   printf("verification...\n");
-  start = clock();
   for (int i = 0; i < N * N; i++) {
-    error += ((C[i] - testC[i]) / testC[i]) * 100; // percent error
+    error += abs((C[i] - testC[i]) / testC[i]) * 100; // percent error
   }
   error = error / (N * N);
-  end = clock();
-  float verTime = (float)(end - start) / CLOCKS_PER_SEC;
   printf("%03f%% error\n", error);
   free(testC);
 }
