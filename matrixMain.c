@@ -7,7 +7,7 @@
 #include <time.h>
 
 // multiply matrices on CPU
-void matrixMultiply(double *A, double *B, double *C) {
+void matrixMultiply(float *A, float *B, float *C) {
   for (int i = 0; i < N; i++) {
     for (int j = 0; j < N; j++) {
       float accumulator = 0.0f;
@@ -20,14 +20,14 @@ void matrixMultiply(double *A, double *B, double *C) {
 }
 
 // use matrix mult function to benchmark CPU performance
-void cpuBench(double *A, double *B) {
-  double *testC = (double *)malloc(N * N * sizeof(double));
+void cpuBench(float *A, float *B) {
+  float *testC = (float *)malloc(N * N * sizeof(float));
 
   printf("multiplying on CPU...\n");
   clock_t start = clock();
   matrixMultiply(A, B, testC);
   clock_t end = clock();
-  double cpuTime = (double)(end - start) / CLOCKS_PER_SEC;
+  float cpuTime = (float)(end - start) / CLOCKS_PER_SEC;
   printf("finished multiplying. Time taken: %0.3f seconds\n", cpuTime);
 
   printf("verification...\n");
@@ -45,7 +45,7 @@ void cpuBench(double *A, double *B) {
     }
   }
   end = clock();
-  double verTime = (double)(end - start) / CLOCKS_PER_SEC;
+  float verTime = (float)(end - start) / CLOCKS_PER_SEC;
   printf("CPU values correct. Time taken: %0.3f seconds\n", verTime);
   free(testC);
 }
@@ -56,12 +56,12 @@ void main(int argc, char *argv[]) {
   time_t t;
   srand((unsigned)time(&t));
   cl_int ret;
-  size_t bytes = N * N * sizeof(double *);
+  size_t bytes = N * N * sizeof(float *);
   double nanoseconds = 0.0f;
 
-  double *hA = (double *)malloc(bytes);
-  double *hB = (double *)malloc(bytes);
-  double *hC = (double *)malloc(bytes);
+  float *hA = (float *)malloc(bytes);
+  float *hB = (float *)malloc(bytes);
+  float *hC = (float *)malloc(bytes);
 
   printf("host arrays malloced\n");
 
@@ -87,7 +87,6 @@ void main(int argc, char *argv[]) {
 
   // create buffers
   cl_mem dA, dB, dC;
-  cl_double d_A;
   createBuffer(&dA, bytes, CL_MEM_READ_ONLY, &context);
   createBuffer(&dB, bytes, CL_MEM_READ_ONLY, &context);
   createBuffer(&dC, bytes, CL_MEM_READ_WRITE, &context);

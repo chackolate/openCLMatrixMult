@@ -157,18 +157,16 @@ void checkErr(cl_int error, char *success) {
   }
 }
 
-// random double between min and max
-double randDouble(double min, double max) {
-  double range = max - min;
-  double div = RAND_MAX / range;
-  return min + (rand() / div);
+// random float between min and max
+float randfloat(float min, float max) {
+  return (((float)rand() * (max - min)) / ((float)RAND_MAX + min));
 }
 
 // initialize host inputs
-void initHost(double *hA, double *hB) {
+void initHost(float *hA, float *hB) {
   for (int i = 0; i < N * N; i++) {
-    hA[i] = i % 2;
-    hB[i] = 1;
+    hA[i] = randfloat(-1.0, 1.0);
+    hB[i] = randfloat(-1.0, 1.0);
   }
 }
 
@@ -274,7 +272,7 @@ void createBuffer(cl_mem *deviceBuffer, size_t size, int direction,
 }
 
 // copy host to device
-void writeBuffer(cl_mem dest, double *source, cl_command_queue *commandQueue) {
+void writeBuffer(cl_mem dest, float *source, cl_command_queue *commandQueue) {
   cl_int err;
   err = clEnqueueWriteBuffer(*commandQueue, dest, CL_TRUE, 0,
                              N * N * sizeof(*source), source, 0, NULL, NULL);
@@ -320,25 +318,26 @@ void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
 }
 
 // read device vectors back to host
-void readBuffer(cl_mem source, double *dest, cl_command_queue *commandQueue) {
+void readBuffer(cl_mem source, float *dest, cl_command_queue *commandQueue) {
   cl_int err;
   err = clEnqueueReadBuffer(*commandQueue, source, CL_TRUE, 0,
                             N * N * sizeof(*dest), (void *)dest, 0, NULL, NULL);
   checkErr(err, "read device to host");
 }
 
-void gpuBench(double *A, double *B, double *C, double nanoseconds) {
+void gpuBench(float *A, float *B, float *C, double nanoseconds) {
   clock_t start = clock();
   printf("verification...\n");
   for (int i = 0; i < N; i++) {
     for (int j = 0; j < N; j++) {
       float accumulator = 0.0;
+      char *index;
       for (int k = 0; k < N; k++) {
         accumulator += A[k * N + i] * B[j * N + k];
       }
       if (C[j * N + i] != accumulator) {
         // printf("%f * %f != %f\n", A[k * N + i], B[j * N + k], accumulator);
-        printf("fail\n");
+        printf("fail [%d][%d]%f != %f\n", i, j, C[j * N + i], accumulator);
         exit(-1);
       }
     }

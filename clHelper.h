@@ -14,9 +14,9 @@ const char *getErrorString(cl_int error);
 
 void checkErr(cl_int error, char *success);
 
-double randDouble(double min, double max);
+float randfloat(float min, float max);
 
-void initHost(double *hA, double *hB);
+void initHost(float *hA, float *hB);
 
 char *kernelFromFile(size_t *kernelSize, char *filename);
 
@@ -31,7 +31,7 @@ void createQueue(cl_command_queue *commandQueue, cl_context *context,
 void createBuffer(cl_mem *deviceBuffer, size_t size, int direction,
                   cl_context *context);
 
-void writeBuffer(cl_mem dest, double *source, cl_command_queue *commandQueue);
+void writeBuffer(cl_mem dest, float *source, cl_command_queue *commandQueue);
 
 void createProgramFromSource(cl_program *program, cl_context *context,
                              const char *kernelSource, size_t *kernelSize);
@@ -45,8 +45,8 @@ void setArgs(cl_kernel *kernel, cl_mem dA, cl_mem dB, cl_mem dC);
 void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
                 cl_event *event);
 
-void readBuffer(cl_mem source, double *dest, cl_command_queue *commandQueue);
+void readBuffer(cl_mem source, float *dest, cl_command_queue *commandQueue);
 
-void gpuBench(double *A, double *B, double *C, double nanoseconds);
+void gpuBench(float *A, float *B, float *C, double nanoseconds);
 
 #endif
