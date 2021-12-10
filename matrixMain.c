@@ -22,24 +22,24 @@ void matrixMultiply(float *A, float *B, float *C) {
 void cpuBench(float *A, float *B, float *C) {
   float *testC = (float *)malloc(N * N * sizeof(float));
 
+  double error;
+
   printf("multiplying on CPU...\n");
   clock_t start = clock();
   matrixMultiply(A, B, testC);
   clock_t end = clock();
   float cpuTime = (float)(end - start) / CLOCKS_PER_SEC;
-  printf("finished multiplying. Time taken: %0.3f seconds\n", cpuTime);
+  printf("finished multiplying. Time taken: %3f seconds\n", cpuTime);
 
   printf("verification...\n");
   start = clock();
   for (int i = 0; i < N * N; i++) {
-    if (C[i] != testC[i]) {
-      printf("fail %d, %f != %f", i, C[i], testC[i]);
-      exit(-1);
-    }
+    error += ((C[i] - testC[i]) / testC[i]) * 100; // percent error
   }
+  error = error / (N * N);
   end = clock();
   float verTime = (float)(end - start) / CLOCKS_PER_SEC;
-  printf("CPU & GPU values agree\n");
+  printf("%03f%% error\n", error);
   free(testC);
 }
 
