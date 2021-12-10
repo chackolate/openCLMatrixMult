@@ -161,16 +161,16 @@ void checkErr(cl_int error, char *success) {
   }
 }
 
-// random float between min and max
-float randfloat(float min, float max) {
-  return (((float)rand() * (max - min)) / ((float)RAND_MAX + min));
+// random double between min and max
+double randdouble(double min, double max) {
+  return (((double)rand() * (max - min)) / ((double)RAND_MAX + min));
 }
 
 // initialize host inputs
-void initHost(float *hA, float *hB) {
+void initHost(double *hA, double *hB) {
   for (int i = 0; i < N * N; i++) {
-    hA[i] = (randfloat(-10.0, 10.0));
-    hB[i] = randfloat(-10.0, 10.0);
+    hA[i] = (randdouble(-10.0, 10.0));
+    hB[i] = randdouble(-10.0, 10.0);
   }
 }
 
@@ -276,7 +276,7 @@ void createBuffer(cl_mem *deviceBuffer, size_t size, int direction,
 }
 
 // copy host to device
-void writeBuffer(cl_mem dest, float *source, cl_command_queue *commandQueue) {
+void writeBuffer(cl_mem dest, double *source, cl_command_queue *commandQueue) {
   cl_int err;
   err = clEnqueueWriteBuffer(*commandQueue, dest, CL_TRUE, 0,
                              N * N * sizeof(*source), source, 0, NULL, NULL);
@@ -322,7 +322,7 @@ void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
 }
 
 // read device vectors back to host
-void readBuffer(cl_mem source, float *dest, cl_command_queue *commandQueue) {
+void readBuffer(cl_mem source, double *dest, cl_command_queue *commandQueue) {
   cl_int err;
   err = clEnqueueReadBuffer(*commandQueue, source, CL_TRUE, 0,
                             N * N * sizeof(*dest), (void *)dest, 0, NULL, NULL);
@@ -339,8 +339,8 @@ void timeProf(double *nanoseconds, cl_event done) {
   *nanoseconds = timeEnd - timeStart;
 }
 
-void runKernel(float *hA, float *hB, float *hC, char *filename, char *func) {
-  size_t bytes = N * N * sizeof(float *);
+void runKernel(double *hA, double *hB, double *hC, char *filename, char *func) {
+  size_t bytes = N * N * sizeof(double *);
   double nanoseconds = 0.0f;
   cl_int ret;
 
