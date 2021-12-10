@@ -153,7 +153,11 @@ void checkErr(cl_int error, char *success) {
     printf("%s\n", getErrorString(error));
     exit(0);
   } else {
-    printf("%s\n", success);
+    if (VERBOSE) {
+      printf("%s\n", success);
+    } else {
+      printf(".");
+    }
   }
 }
 
@@ -165,8 +169,8 @@ float randfloat(float min, float max) {
 // initialize host inputs
 void initHost(float *hA, float *hB) {
   for (int i = 0; i < N * N; i++) {
-    hA[i] = randfloat(-1.0, 1.0);
-    hB[i] = randfloat(-1.0, 1.0);
+    hA[i] = (randfloat(-10.0, 10.0));
+    hB[i] = randfloat(-10.0, 10.0);
   }
 }
 
@@ -226,7 +230,7 @@ char *kernelFromFile(size_t *kernelSize, char *filename) {
   char *source = (char *)malloc((size + 1) * sizeof(char));
   fread(source, 1, size * sizeof(char), kernelFile);
   fclose(kernelFile);
-  printf("loaded kernel from file\n");
+  printf("loaded file %s\n", filename);
 
   *kernelSize = size;
   return source;
@@ -325,26 +329,91 @@ void readBuffer(cl_mem source, float *dest, cl_command_queue *commandQueue) {
   checkErr(err, "read device to host");
 }
 
-void gpuBench(float *A, float *B, float *C, double nanoseconds) {
-  clock_t start = clock();
-  printf("verification...\n");
-  for (int i = 0; i < N; i++) {
-    for (int j = 0; j < N; j++) {
-      float accumulator = 0.0;
-      char *index;
-      for (int k = 0; k < N; k++) {
-        accumulator += A[k * N + i] * B[j * N + k];
-      }
-      if (C[j * N + i] != accumulator) {
-        // printf("%f * %f != %f\n", A[k * N + i], B[j * N + k], accumulator);
-        printf("fail [%d][%d]%f != %f\n", i, j, C[j * N + i], accumulator);
-        exit(-1);
-      }
-    }
-  }
-  clock_t end = clock();
-  double cpuTime = (end - start) / (double)CLOCKS_PER_SEC;
-  printf("GPU values correct. Time taken: %0.3f milliseconds\n",
+void timeProf(double *nanoseconds, cl_event done) {
+  cl_ulong timeStart;
+  cl_ulong timeEnd;
+  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_START, sizeof(timeStart),
+                          &timeStart, NULL);
+  clGetEventProfilingInfo(done, CL_PROFILING_COMMAND_END, sizeof(timeEnd),
+                          &timeEnd, NULL);
+  *nanoseconds = timeEnd - timeStart;
+}
+
+void runKernel(float *hA, float *hB, float *hC, char *filename, char *func) {
+  size_t bytes = N * N * sizeof(float *);
+  double nanoseconds = 0.0f;
+  cl_int ret;
+
+  // initialize values
+  initHost(hA, hB);
+
+  // load kernel file
+  size_t kernelSize;
+  char *kernelSource = kernelFromFile(&kernelSize, filename);
+
+  // get platform & device
+  cl_platform_id platformID = NULL;
+  cl_device_id deviceID = NULL;
+  getPlatformDevice(&platformID, &deviceID);
+
+  // create context
+  cl_context context;
+  createContext(&context, &platformID, &deviceID);
+
+  // create command queue
+  cl_command_queue commandQueue;
+  createQueue(&commandQueue, &context, &deviceID, 0, 1);
+
+  // create buffers
+  cl_mem dA, dB, dC;
+  createBuffer(&dA, bytes, CL_MEM_READ_ONLY, &context);
+  createBuffer(&dB, bytes, CL_MEM_READ_ONLY, &context);
+  createBuffer(&dC, bytes, CL_MEM_READ_WRITE, &context);
+  writeBuffer(dA, hA, &commandQueue);
+  writeBuffer(dB, hB, &commandQueue);
+  writeBuffer(dC, hA, &commandQueue); // clear any previous results in output
+
+  // create program from kernel source
+  cl_program program;
+  createProgramFromSource(&program, &context, kernelSource, &kernelSize);
+
+  // build program
+  buildProgram(&program, &deviceID);
+
+  // create kernel
+  cl_kernel kernel;
+  createKernel(&kernel, &program, func);
+
+  // set arguments
+  setArgs(&kernel, dA, dB, dC);
+
+  // exec kernel
+  cl_event done = NULL;
+  execKernel(commandQueue, kernel, &done);
+
+  readBuffer(dC, hC, &commandQueue);
+  ret = clFinish(commandQueue);
+  checkErr(ret, "finished queue");
+
+  // profiling
+  timeProf(&nanoseconds, done);
+
+  ret = clReleaseEvent(done);
+  checkErr(ret, "released event");
+  ret = clReleaseKernel(kernel);
+  checkErr(ret, "released kernel");
+  ret = clReleaseProgram(program);
+  checkErr(ret, "released program");
+  ret = clReleaseMemObject(dC);
+  ret |= clReleaseMemObject(dB);
+  ret |= clReleaseMemObject(dA);
+  checkErr(ret, "released mem buffers");
+  ret = clReleaseCommandQueue(commandQueue);
+  checkErr(ret, "released command queue");
+  ret = clReleaseContext(context);
+  checkErr(ret, "released context");
+  free(kernelSource);
+  checkErr(ret, "freed kernel source");
+  printf("!\nkernel %s:%s run in %f milliseconds\n", filename, func,
          nanoseconds / 1000000.0);
-  printf("CPU verification time: %0.3f seconds\n", cpuTime);
 }

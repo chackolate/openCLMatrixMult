@@ -8,7 +8,7 @@
 #include <time.h>
 
 #define N 2048
-#define MAX_SOURCE_SIZE (0x100000)
+#define VERBOSE 0
 
 const char *getErrorString(cl_int error);
 
@@ -48,5 +48,9 @@ void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
 void readBuffer(cl_mem source, float *dest, cl_command_queue *commandQueue);
 
 void gpuBench(float *A, float *B, float *C, double nanoseconds);
+
+void timeProf(double *nanoseconds, cl_event done);
+
+void runKernel(float *hA, float *hB, float *hC, char *filename, char *func);
 
 #endif
