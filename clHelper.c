@@ -309,13 +309,9 @@ void execKernel(cl_command_queue commandQueue, cl_kernel kernel,
   const size_t local[2] = {tile, tile};
   const size_t global[2] = {N, N};
   cl_int err;
-  // err = clGetDeviceInfo(deviceID, CL_DEVICE_MAX_WORK_GROUP_SIZE,
-  // sizeof(size_t),
-  //                       (void *)&localWorkSize, NULL);
-  // printf("using device max work group size of %d\n", localWorkSize);
-  // size_t globalWorkSize = N * N; // N*N global items to calculate
-  err = clEnqueueNDRangeKernel(commandQueue, kernel, 2, NULL, global, local, 0,
-                               NULL, event);
+  err = clEnqueueNDRangeKernel(
+      commandQueue, kernel, 2, NULL, global, local, 0, NULL,
+      event); // 2D kernel with global /local work size set
   checkErr(err, "kernel executed");
   err = clWaitForEvents(1, event);
   checkErr(err, "finished execution");

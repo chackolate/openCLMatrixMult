@@ -1,9 +1,11 @@
 #define CL_TARGET_OPENCL_VERSION 200
 
 #include <CL/opencl.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+
 
 #define N (1 << 27) // length of vector 134,217,728
 #define MAX_SOURCE_SIZE (0x100000)
@@ -35,7 +37,7 @@ void cpuBench(double *A, double *B) {
 
 void gpuBench(double *A, double *B, double *C, double nanoseconds) {
   for (int i = 0; i < N; i++) {
-    if (C[i] != (A[i] + B[i])) {
+    if (fabs(C[i] - (A[i] + B[i])) > 0.001) {
       printf("A%f + B%f = C%f\n", A[i], B[i], C[i]);
       break;
     }
@@ -394,7 +396,7 @@ int main(int argc, char *argv[]) {
 
   // create kernel
   cl_kernel kernel;
-  createKernel(&kernel, &program, "mult");
+  createKernel(&kernel, &program, "add");
 
   // set kernel arguments
   setArgs(&kernel, dA, dB, dC);
